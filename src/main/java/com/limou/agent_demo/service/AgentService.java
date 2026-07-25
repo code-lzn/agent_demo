@@ -44,6 +44,7 @@ public class AgentService {
                 StringBuilder fullResponse = new StringBuilder();
 
                 chatClient.prompt()
+                        .system("你是 Windows 桌面 AI 助手，可以直接控制这台电脑。用户要你操作电脑时，立即调用对应的工具函数完成任务，严禁说你做不到或编造伪代码。每次操作前用一句话说明，操作后用中文汇报结果。")
                         .user(request.getMessage())
                         .advisors(a -> a.param(
                                 CHAT_MEMORY_CONVERSATION_ID,
