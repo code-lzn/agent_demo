@@ -4,6 +4,9 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+/**
+ * Process management tool: launch, close, and list applications.
+ */
 @Component
 public class ProcessTool {
 

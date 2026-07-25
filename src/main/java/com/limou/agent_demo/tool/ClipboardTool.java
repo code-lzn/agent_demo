@@ -12,44 +12,45 @@ import java.awt.event.KeyEvent;
 import java.io.IOException;
 
 /**
- * 系统剪贴板工具，支持读写剪贴板和粘贴操作。
+ * System clipboard tool for reading, writing, and pasting text.
  */
 @Component
 public class ClipboardTool {
 
-    // ==================== 剪贴板读写 ====================
+    // ==================== Clipboard Read/Write ====================
 
-    @Tool(description = "读取系统剪贴板中的文本内容")
+    @Tool(description = "Read text content from the system clipboard")
     public String getClipboard() {
         try {
             String text = (String) Toolkit.getDefaultToolkit()
                     .getSystemClipboard()
                     .getData(DataFlavor.stringFlavor);
             return text == null || text.isEmpty()
-                    ? "剪贴板为空"
+                    ? "Clipboard is empty"
                     : text;
         } catch (UnsupportedFlavorException | IOException e) {
-            return "读取剪贴板失败: " + e.getMessage();
+            return "Failed to read clipboard: " + e.getMessage();
         } catch (IllegalStateException e) {
-            return "无法访问剪贴板，可能正在被其他程序占用";
+            return "Cannot access clipboard, may be locked by another program";
         }
     }
 
-    @Tool(description = "将文本写入系统剪贴板，之后可通过粘贴（Ctrl+V）粘贴到任意应用")
-    public String setClipboard(@ToolParam(description = "要写入剪贴板的文本") String text) {
+    @Tool(description = "Write text to the system clipboard, so it can be pasted with Ctrl+V into any application")
+    public String setClipboard(@ToolParam(description = "Text to write to the clipboard") String text) {
         try {
             StringSelection selection = new StringSelection(text);
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
             String preview = text.length() > 100 ? text.substring(0, 100) + "..." : text;
-            return "已写入剪贴板: " + preview;
+            return "Copied to clipboard: " + preview;
         } catch (IllegalStateException e) {
-            return "无法访问剪贴板: " + e.getMessage();
+            return "Cannot access clipboard: " + e.getMessage();
         }
     }
 
-    // ==================== 粘贴 ====================
+    // ==================== Paste ====================
 
-    @Tool(description = "在当前焦点窗口执行粘贴操作（模拟 Ctrl+V）。如果需要粘贴大量中文文本，先将内容 setClipboard 再用此方法粘贴，比逐字符打字快得多")
+    @Tool(description = "Paste clipboard content at the current cursor position by simulating Ctrl+V." +
+            " Use this together with setClipboard for efficient text input — much faster than typing character by character")
     public String paste() {
         try {
             Robot robot = new Robot();
@@ -59,17 +60,18 @@ public class ClipboardTool {
             robot.delay(50);
             robot.keyRelease(KeyEvent.VK_V);
             robot.keyRelease(KeyEvent.VK_CONTROL);
-            return "已粘贴";
+            return "Pasted successfully";
         } catch (AWTException e) {
-            return "粘贴失败: " + e.getMessage();
+            return "Paste failed: " + e.getMessage();
         }
     }
 
-    @Tool(description = "写入剪贴板并自动粘贴到当前窗口。等同于先 setClipboard 再 paste")
-    public String typeViaClipboard(@ToolParam(description = "要粘贴的文本内容") String text) {
+    @Tool(description = "Copy text to clipboard and paste it into the current window in one step." +
+            " Equivalent to setClipboard followed by paste. Ideal for large blocks of text")
+    public String typeViaClipboard(@ToolParam(description = "Text to paste") String text) {
         String setResult = setClipboard(text);
-        if (setResult.startsWith("无法")) return setResult;
-        robotDelay(100); // 等剪贴板就绪
+        if (setResult.startsWith("Cannot")) return setResult;
+        robotDelay(100);
         return paste();
     }
 

@@ -25,10 +25,10 @@ public class FileTool {
         this.safety = safety;
     }
 
-    // ==================== 读 ====================
+    // ==================== Read ====================
 
-    @Tool(description = "读取文件的全部文本内容")
-    public String readFile(@ToolParam(description = "文件完整路径") String filePath) {
+    @Tool(description = "Read the entire content of a file")
+    public String readFile(@ToolParam(description = "Full path to the file") String filePath) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             return Files.readString(Path.of(filePath));
@@ -37,10 +37,10 @@ public class FileTool {
         }
     }
 
-    @Tool(description = "读取文件开头的指定行数")
+    @Tool(description = "Read the first N lines of a file")
     public String readFileLines(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "要读取的行数") int n) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Number of lines to read") int n) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try (Stream<String> lines = Files.lines(Path.of(filePath))) {
             return lines.limit(n).collect(Collectors.joining("\n"));
@@ -49,11 +49,12 @@ public class FileTool {
         }
     }
 
-    @Tool(description = "从指定偏移位置开始读取 N 行，适合分块读取大文件。例如 offset=100, limit=50 读取第 100-149 行")
+    @Tool(description = "Read lines from a file starting at offset (0-based), returning up to limit lines." +
+            " Useful for reading large files in chunks. For example, offset=100, limit=50 reads lines 100-149")
     public String readFileRange(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "起始行号（从 0 开始，第一行为 0）") int offset,
-            @ToolParam(description = "最多读取行数") int limit) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Line number to start from (0-based, first line is 0)") int offset,
+            @ToolParam(description = "Maximum number of lines to read") int limit) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try (Stream<String> lines = Files.lines(Path.of(filePath))) {
             return lines.skip(offset).limit(limit).collect(Collectors.joining("\n"));
@@ -62,10 +63,10 @@ public class FileTool {
         }
     }
 
-    @Tool(description = "读取文件最后 N 行，类似于 Unix tail 命令，适合查看日志文件")
+    @Tool(description = "Read the last N lines of a file (like Unix tail). Useful for reading log files")
     public String readLastLines(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "从末尾读取的行数") int n) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Number of lines to read from the end") int n) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             List<String> allLines = Files.readAllLines(Path.of(filePath));
@@ -76,170 +77,169 @@ public class FileTool {
         }
     }
 
-    @Tool(description = "统计文件总共有多少行")
-    public String countLines(@ToolParam(description = "文件完整路径") String filePath) {
+    @Tool(description = "Count the number of lines in a file")
+    public String countLines(@ToolParam(description = "Full path to the file") String filePath) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try (Stream<String> lines = Files.lines(Path.of(filePath))) {
             long count = lines.count();
-            return "文件 '" + filePath + "' 共 " + count + " 行";
+            return "File '" + filePath + "' has " + count + " lines";
         } catch (IOException e) {
             return "Error reading file: " + e.getMessage();
         }
     }
 
-    // ==================== 写 ====================
+    // ==================== Write ====================
 
-    @Tool(description = "将文本内容写入文件（覆盖已有内容，文件不存在则创建）")
+    @Tool(description = "Write text content to a file (creates the file if it doesn't exist, overwrites if it does)")
     public String writeFile(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "要写入的内容") String content) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Content to write") String content) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             ensureParentDir(filePath);
             Files.writeString(Path.of(filePath), content,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-            return "成功写入文件: '" + filePath + "'";
+            return "Successfully wrote to '" + filePath + "'";
         } catch (IOException e) {
             return "Error writing file: " + e.getMessage();
         }
     }
 
-    @Tool(description = "将文本内容追加到文件末尾（文件不存在则创建）")
+    @Tool(description = "Append text content to the end of a file. Creates the file if it doesn't exist")
     public String appendFile(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "要追加的内容") String content) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Content to append") String content) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             ensureParentDir(filePath);
             Files.writeString(Path.of(filePath), content,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            return "成功追加到文件: '" + filePath + "'";
+            return "Successfully appended to '" + filePath + "'";
         } catch (IOException e) {
             return "Error appending to file: " + e.getMessage();
         }
     }
 
-    // ==================== 目录操作 ====================
+    // ==================== Directory ====================
 
-    @Tool(description = "列出指定目录下的所有文件和子目录")
-    public String listDir(@ToolParam(description = "目录完整路径") String dirPath) {
+    @Tool(description = "List all files and subdirectories in a given directory")
+    public String listDir(@ToolParam(description = "Full path to the directory") String dirPath) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try (var stream = Files.list(Path.of(dirPath))) {
-            return stream.map(p -> (Files.isDirectory(p) ? "[目录] " : "[文件] ") + p.getFileName())
+            return stream.map(p -> (Files.isDirectory(p) ? "[DIR] " : "[FILE] ") + p.getFileName())
                     .collect(Collectors.joining("\n"));
         } catch (IOException e) {
             return "Error listing directory: " + e.getMessage();
         }
     }
 
-    @Tool(description = "递归创建目录，包括所有不存在的父目录（类似 mkdir -p）。目录已存在也不报错")
-    public String createDir(@ToolParam(description = "要创建的目录完整路径") String dirPath) {
+    @Tool(description = "Create a directory, including any missing parent directories (like mkdir -p)." +
+            " Returns success even if the directory already exists")
+    public String createDir(@ToolParam(description = "Full path to the directory to create") String dirPath) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
             if (Files.exists(path)) {
                 return Files.isDirectory(path)
-                        ? "目录已存在: '" + dirPath + "'"
-                        : "路径已存在但不是目录: '" + dirPath + "'";
+                        ? "Directory already exists: '" + dirPath + "'"
+                        : "Path exists but is not a directory: '" + dirPath + "'";
             }
             Files.createDirectories(path);
-            return "成功创建目录: '" + dirPath + "'";
+            return "Successfully created directory: '" + dirPath + "'";
         } catch (IOException e) {
             return "Error creating directory: " + e.getMessage();
         }
     }
 
-    // ==================== 删除 ====================
+    // ==================== Delete ====================
 
-    @Tool(description = "删除指定文件。如果路径是目录则会失败，请使用 deleteDir 删除目录")
-    public String deleteFile(@ToolParam(description = "要删除的文件完整路径") String filePath) {
+    @Tool(description = "Delete a file. Fails if the path is a directory (use deleteDir for directories)")
+    public String deleteFile(@ToolParam(description = "Full path to the file to delete") String filePath) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             Path path = Path.of(filePath);
-            if (!Files.exists(path)) return "文件不存在: '" + filePath + "'";
-            if (Files.isDirectory(path)) return "该路径是目录，请使用 deleteDir 删除: '" + filePath + "'";
+            if (!Files.exists(path)) return "File does not exist: '" + filePath + "'";
+            if (Files.isDirectory(path)) return "Path is a directory, use deleteDir instead: '" + filePath + "'";
             Files.delete(path);
-            return "成功删除文件: '" + filePath + "'";
+            return "Successfully deleted file: '" + filePath + "'";
         } catch (IOException e) {
             return "Error deleting file: " + e.getMessage();
         }
     }
 
-    @Tool(description = "递归删除目录及其所有内容，请谨慎使用")
-    public String deleteDir(@ToolParam(description = "要删除的目录完整路径") String dirPath) {
+    @Tool(description = "Delete a directory and all its contents recursively. Use with caution")
+    public String deleteDir(@ToolParam(description = "Full path to the directory to delete") String dirPath) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
-            if (!Files.exists(path)) return "目录不存在: '" + dirPath + "'";
-            if (!Files.isDirectory(path)) return "该路径是文件而非目录，请使用 deleteFile 删除: '" + dirPath + "'";
+            if (!Files.exists(path)) return "Directory does not exist: '" + dirPath + "'";
+            if (!Files.isDirectory(path)) return "Path is a file, use deleteFile instead: '" + dirPath + "'";
             try (Stream<Path> walk = Files.walk(path)) {
                 walk.sorted(Comparator.reverseOrder())
                         .forEach(p -> {
-                            try {
-                                Files.delete(p);
-                            } catch (IOException ignored) {
-                            }
+                            try { Files.delete(p); } catch (IOException ignored) {}
                         });
             }
-            return "成功删除目录: '" + dirPath + "'";
+            return "Successfully deleted directory: '" + dirPath + "'";
         } catch (IOException e) {
             return "Error deleting directory: " + e.getMessage();
         }
     }
 
-    // ==================== 复制 & 移动 ====================
+    // ==================== Copy & Move ====================
 
-    @Tool(description = "将文件复制到目标路径。目标可以是目录或新文件路径，目标已存在则覆盖")
+    @Tool(description = "Copy a file to a target path. Target can be a directory or a new file path." +
+            " Overwrites if the target already exists")
     public String copyFile(
-            @ToolParam(description = "源文件路径") String sourcePath,
-            @ToolParam(description = "目标路径（目录或新文件名）") String targetPath) {
+            @ToolParam(description = "Source file path") String sourcePath,
+            @ToolParam(description = "Destination file or directory path") String targetPath) {
         if (!safety.isPathAllowed(sourcePath)) return "Access denied: " + sourcePath;
         if (!safety.isPathAllowed(targetPath)) return "Access denied: " + targetPath;
         try {
             Path src = Path.of(sourcePath);
             Path dst = Path.of(targetPath);
-            if (!Files.exists(src)) return "源文件不存在: '" + sourcePath + "'";
-            if (Files.isDirectory(src)) return "源路径是目录，不支持复制目录: '" + sourcePath + "'";
+            if (!Files.exists(src)) return "Source file does not exist: '" + sourcePath + "'";
+            if (Files.isDirectory(src)) return "Source is a directory, copy not supported: '" + sourcePath + "'";
             if (Files.isDirectory(dst)) {
                 dst = dst.resolve(src.getFileName());
             }
             ensureParentDir(dst.toString());
             Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
-            return "成功复制 '" + sourcePath + "' 到 '" + dst + "'";
+            return "Successfully copied '" + sourcePath + "' to '" + dst + "'";
         } catch (IOException e) {
             return "Error copying file: " + e.getMessage();
         }
     }
 
-    @Tool(description = "移动或重命名文件或目录")
+    @Tool(description = "Move or rename a file or directory")
     public String moveFile(
-            @ToolParam(description = "源文件或目录路径") String sourcePath,
-            @ToolParam(description = "目标路径（新名称或新位置）") String targetPath) {
+            @ToolParam(description = "Source file or directory path") String sourcePath,
+            @ToolParam(description = "Destination path (new name or new location)") String targetPath) {
         if (!safety.isPathAllowed(sourcePath)) return "Access denied: " + sourcePath;
         if (!safety.isPathAllowed(targetPath)) return "Access denied: " + targetPath;
         try {
             Path src = Path.of(sourcePath);
             Path dst = Path.of(targetPath);
-            if (!Files.exists(src)) return "源路径不存在: '" + sourcePath + "'";
+            if (!Files.exists(src)) return "Source does not exist: '" + sourcePath + "'";
             if (Files.isDirectory(dst) && !Files.isDirectory(src)) {
                 dst = dst.resolve(src.getFileName());
             }
             ensureParentDir(dst.toString());
             Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
-            return "成功移动 '" + sourcePath + "' 到 '" + dst + "'";
+            return "Successfully moved '" + sourcePath + "' to '" + dst + "'";
         } catch (IOException e) {
             return "Error moving file: " + e.getMessage();
         }
     }
 
-    // ==================== 信息 ====================
+    // ==================== Info ====================
 
-    @Tool(description = "获取文件或目录的详细信息：大小、修改时间、创建时间、读写权限等")
-    public String getFileInfo(@ToolParam(description = "文件或目录的完整路径") String filePath) {
+    @Tool(description = "Get detailed information about a file or directory: size, last modified time, type, permissions")
+    public String getFileInfo(@ToolParam(description = "Full path to the file or directory") String filePath) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             Path path = Path.of(filePath);
-            if (!Files.exists(path)) return "路径不存在: '" + filePath + "'";
+            if (!Files.exists(path)) return "Path does not exist: '" + filePath + "'";
 
             BasicFileAttributes attr = Files.readAttributes(path, BasicFileAttributes.class);
             DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -249,72 +249,70 @@ public class FileTool {
                     attr.creationTime().toInstant(), ZoneId.systemDefault()).format(fmt);
 
             StringBuilder sb = new StringBuilder();
-            sb.append("路径: ").append(path.toRealPath()).append("\n");
-            sb.append("类型: ").append(attr.isDirectory() ? "目录" : "文件").append("\n");
-            sb.append("大小: ").append(formatSize(attr.size())).append("\n");
-            sb.append("创建时间: ").append(createdTime).append("\n");
-            sb.append("修改时间: ").append(modifiedTime).append("\n");
-            sb.append("可读: ").append(Files.isReadable(path) ? "是" : "否").append("\n");
-            sb.append("可写: ").append(Files.isWritable(path) ? "是" : "否").append("\n");
-            sb.append("可执行: ").append(Files.isExecutable(path) ? "是" : "否");
+            sb.append("Path: ").append(path.toRealPath()).append("\n");
+            sb.append("Type: ").append(attr.isDirectory() ? "Directory" : "File").append("\n");
+            sb.append("Size: ").append(formatSize(attr.size())).append("\n");
+            sb.append("Created: ").append(createdTime).append("\n");
+            sb.append("Modified: ").append(modifiedTime).append("\n");
+            sb.append("Readable: ").append(Files.isReadable(path) ? "Yes" : "No").append("\n");
+            sb.append("Writable: ").append(Files.isWritable(path) ? "Yes" : "No").append("\n");
+            sb.append("Executable: ").append(Files.isExecutable(path) ? "Yes" : "No");
             return sb.toString();
         } catch (IOException e) {
             return "Error getting file info: " + e.getMessage();
         }
     }
 
-    // ==================== 打开 ====================
+    // ==================== Open ====================
 
-    @Tool(description = "用系统默认程序打开文件。\\n" +
-            "例如：.txt 会用记事本打开，.pdf 会用 PDF 阅读器打开，.jpg 会用图片查看器打开。" +
-            "不支持打开可执行文件（.exe、.bat 等），请使用 ProcessTool.openApp")
-    public String openFile(@ToolParam(description = "文件完整路径") String filePath) {
+    @Tool(description = "Open a file with the system default application." +
+            " For example: .txt opens in Notepad, .pdf opens in PDF reader, .jpg opens in image viewer." +
+            " Executable files (.exe, .bat, etc.) are blocked for safety — use ProcessTool.openApp instead")
+    public String openFile(@ToolParam(description = "Full path to the file") String filePath) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             Path path = Path.of(filePath);
-            if (!Files.exists(path)) return "文件不存在: '" + filePath + "'";
-            if (Files.isDirectory(path)) return "该路径是目录，请使用 openDir: '" + filePath + "'";
+            if (!Files.exists(path)) return "File does not exist: '" + filePath + "'";
+            if (Files.isDirectory(path)) return "Path is a directory, use openDir: '" + filePath + "'";
 
-            // 禁止打开可执行文件，安全考虑
             String name = path.getFileName().toString().toLowerCase();
             if (name.endsWith(".exe") || name.endsWith(".bat") || name.endsWith(".cmd")
                     || name.endsWith(".com") || name.endsWith(".msi")) {
-                return "拒绝打开可执行文件（安全限制），请使用 ProcessTool.openApp: '" + filePath + "'";
+                return "Blocked for safety: executable files not supported. Use ProcessTool.openApp instead: '" + filePath + "'";
             }
 
             Desktop.getDesktop().open(path.toFile());
-            return "已用默认程序打开文件: '" + filePath + "'";
+            return "Opened file with default application: '" + filePath + "'";
         } catch (IOException e) {
-            return "打开文件失败: " + e.getMessage();
+            return "Failed to open file: " + e.getMessage();
         }
     }
 
-    @Tool(description = "在 Windows 资源管理器中打开目录。如果传入的是文件路径，则在资源管理器中打开该文件所在的目录并选中该文件")
-    public String openDir(@ToolParam(description = "目录路径（也可以是文件路径，会打开所在目录）") String dirPath) {
+    @Tool(description = "Open a directory in Windows Explorer. If a file path is given," +
+            " opens the parent directory and selects the file")
+    public String openDir(@ToolParam(description = "Directory path (or file path to reveal in Explorer)") String dirPath) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
-            if (!Files.exists(path)) return "路径不存在: '" + dirPath + "'";
+            if (!Files.exists(path)) return "Path does not exist: '" + dirPath + "'";
 
             if (Files.isDirectory(path)) {
-                // 打开目录
                 Desktop.getDesktop().open(path.toFile());
             } else {
-                // 是文件，打开所在目录并选中文件
                 Runtime.getRuntime().exec(new String[]{"explorer", "/select,", path.toString()});
             }
-            return "已在资源管理器中打开: '" + dirPath + "'";
+            return "Opened in Explorer: '" + dirPath + "'";
         } catch (IOException e) {
-            return "打开目录失败: " + e.getMessage();
+            return "Failed to open directory: " + e.getMessage();
         }
     }
 
-    // ==================== 搜索 ====================
+    // ==================== Search ====================
 
-    @Tool(description = "在文件中搜索关键字，返回包含该关键字的行及行号")
+    @Tool(description = "Search for a keyword in a file and return matching lines with line numbers")
     public String searchInFile(
-            @ToolParam(description = "文件完整路径") String filePath,
-            @ToolParam(description = "要搜索的关键字") String keyword) {
+            @ToolParam(description = "Full path to the file") String filePath,
+            @ToolParam(description = "Keyword to search for") String keyword) {
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             List<String> lines = Files.readAllLines(Path.of(filePath));
@@ -324,19 +322,20 @@ public class FileTool {
                     sb.append(i + 1).append(": ").append(lines.get(i)).append("\n");
                 }
             }
-            return sb.isEmpty() ? "未找到匹配内容" : sb.toString().stripTrailing();
+            return sb.isEmpty() ? "No matches found" : sb.toString().stripTrailing();
         } catch (IOException e) {
             return "Error reading file: " + e.getMessage();
         }
     }
 
-    @Tool(description = "递归搜索目录下所有文本文件中的关键字，自动跳过二进制文件")
+    @Tool(description = "Search for a keyword recursively in all text files under a directory." +
+            " Automatically skips binary files")
     public String searchInDir(
-            @ToolParam(description = "目录完整路径") String dirPath,
-            @ToolParam(description = "要搜索的关键字") String keyword) {
+            @ToolParam(description = "Full path to the directory to search in") String dirPath,
+            @ToolParam(description = "Keyword to search for") String keyword) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         Path root = Path.of(dirPath);
-        if (!Files.isDirectory(root)) return "不是目录: '" + dirPath + "'";
+        if (!Files.isDirectory(root)) return "Not a directory: '" + dirPath + "'";
         try (Stream<Path> walk = Files.walk(root)) {
             StringBuilder sb = new StringBuilder();
             walk.filter(Files::isRegularFile)
@@ -352,22 +351,21 @@ public class FileTool {
                                             .append("\n");
                                 }
                             }
-                        } catch (IOException ignored) {
-                        }
+                        } catch (IOException ignored) {}
                     });
-            return sb.isEmpty() ? "未找到匹配 '" + keyword + "' 的内容" : sb.toString().stripTrailing();
+            return sb.isEmpty() ? "No matches found for '" + keyword + "'" : sb.toString().stripTrailing();
         } catch (IOException e) {
             return "Error searching directory: " + e.getMessage();
         }
     }
 
-    @Tool(description = "按通配符模式在目录中递归查找文件，如 *.java、test*.xml")
+    @Tool(description = "Find files by name pattern in a directory. Supports wildcards like *.java, *.txt, test*.xml")
     public String findFiles(
-            @ToolParam(description = "目录完整路径") String dirPath,
-            @ToolParam(description = "通配符模式，如 *.java、*.txt") String pattern) {
+            @ToolParam(description = "Full path to the directory to search in") String dirPath,
+            @ToolParam(description = "Glob pattern, e.g. *.java, *.txt") String pattern) {
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         Path root = Path.of(dirPath);
-        if (!Files.isDirectory(root)) return "不是目录: '" + dirPath + "'";
+        if (!Files.isDirectory(root)) return "Not a directory: '" + dirPath + "'";
         try (Stream<Path> walk = Files.walk(root)) {
             PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
             String results = walk.filter(Files::isRegularFile)
@@ -375,14 +373,14 @@ public class FileTool {
                     .map(p -> root.relativize(p).toString())
                     .collect(Collectors.joining("\n"));
             return results.isEmpty()
-                    ? "在 '" + dirPath + "' 中未找到匹配 '" + pattern + "' 的文件"
+                    ? "No files matching '" + pattern + "' found in '" + dirPath + "'"
                     : results;
         } catch (IOException e) {
             return "Error searching files: " + e.getMessage();
         }
     }
 
-    // ==================== 辅助方法 ====================
+    // ==================== Helpers ====================
 
     private void ensureParentDir(String filePath) throws IOException {
         Path parent = Path.of(filePath).getParent();
@@ -399,7 +397,7 @@ public class FileTool {
     }
 
     /**
-     * 通过检查前 8KB 是否包含 null 字节来判断文件是否可能是二进制文件
+     * Check if a file is likely binary by looking for null bytes in the first 8KB.
      */
     private boolean isLikelyBinary(Path file) {
         try {
