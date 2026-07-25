@@ -12,9 +12,13 @@ import com.limou.agent_demo.tool.ToolCallCapture;
 import com.limou.agent_demo.tool.ToolContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -48,19 +52,22 @@ public class AgentService {
     private final LocalRagService localRagService;
     private final ToolContext toolContext;
     private final ToolCallCapture toolCallCapture;
+    private final ChatMemory chatMemory;
 
     public AgentService(DecisionEngine decisionEngine,
                         ConversationMapper conversationMapper,
                         MessageMapper messageMapper,
                         LocalRagService localRagService,
                         ToolContext toolContext,
-                        ToolCallCapture toolCallCapture) {
+                        ToolCallCapture toolCallCapture,
+                        ChatMemory chatMemory) {
         this.decisionEngine = decisionEngine;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.localRagService = localRagService;
         this.toolContext = toolContext;
         this.toolCallCapture = toolCallCapture;
+        this.chatMemory = chatMemory;
     }
 
     /**
@@ -72,6 +79,7 @@ public class AgentService {
 
         // 1. 会话管理
         String conversationId = getOrCreateConversationId(request);
+        primeChatMemory(conversationId);
         String userMsgId = UUID.randomUUID().toString();
         persistUserMessage(request.getMessage(), userMsgId, conversationId);
 
@@ -128,6 +136,35 @@ public class AgentService {
     }
 
     // ==================== 持久化 ====================
+
+    /**
+     * 将数据库中的历史消息载入 ChatMemory，确保 JVM 重启后对话上下文不丢失。
+     * 仅在 ChatMemory 中尚无此会话记录时执行（避免重复加载）。
+     */
+    private void primeChatMemory(String conversationId) {
+        List<org.springframework.ai.chat.messages.Message> existing = chatMemory.get(conversationId);
+        if (existing != null && !existing.isEmpty()) return;
+
+        List<Message> dbMessages = messageMapper.selectRecentByConversationId(conversationId, 20);
+        if (dbMessages.isEmpty()) return;
+
+        List<org.springframework.ai.chat.messages.Message> aiMessages = new ArrayList<>();
+        // DB 返回 DESC (最新在前)，反转为按时间顺序添加
+        for (int i = dbMessages.size() - 1; i >= 0; i--) {
+            Message m = dbMessages.get(i);
+            if ("user".equals(m.getRole())) {
+                aiMessages.add(new UserMessage(m.getContent()));
+            } else if ("assistant".equals(m.getRole())) {
+                aiMessages.add(new AssistantMessage(m.getContent()));
+            }
+        }
+
+        if (!aiMessages.isEmpty()) {
+            chatMemory.add(conversationId, aiMessages);
+            log.info("[AgentService] 已加载 {} 条历史消息到 ChatMemory, conversationId={}",
+                    aiMessages.size(), conversationId);
+        }
+    }
 
     private String getOrCreateConversationId(ChatRequest request) {
         if (request.getConversationId() != null && !request.getConversationId().isEmpty()) {
