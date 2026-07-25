@@ -86,7 +86,7 @@ public class AgentService {
         return Flux.defer(() -> {
             toolContext.begin(conversationId, confirm);
 
-            return decisionEngine.decide(enrichedMessage, conversationId)
+            return decisionEngine.decide(enrichedMessage, conversationId, confirm)
                     .doOnNext(event -> {
                         if ("message".equals(event.getType()) && event.getData() != null) {
                             fullResponse.append(event.getData().toString());
@@ -96,6 +96,7 @@ public class AgentService {
                         List<Map<String, Object>> toolCalls = toolCallCapture.drain();
                         persistAssistantMessage(fullResponse.toString(), conversationId, toolCalls);
                     })
+                    .doOnError(error -> log.error("[AgentService] 决策引擎出错", error))
                     .doFinally(signal -> {
                         toolContext.clear();
                         toolCallCapture.clear();
