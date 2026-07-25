@@ -7,10 +7,14 @@ import org.springframework.stereotype.Component;
 import java.awt.*;
 import java.awt.event.KeyEvent;
 
+/**
+ * Keyboard input simulation tool using java.awt.Robot.
+ */
 @Component
 public class InputTool {
 
-    @Tool(description = "Type text into the currently focused window using keyboard simulation")
+    @Tool(description = "Type text into the currently focused window by simulating keyboard input." +
+            " For large amounts of text, consider using ClipboardTool.typeViaClipboard instead — it is much faster")
     public String typeText(@ToolParam(description = "Text to type") String text) {
         try {
             Robot robot = new Robot();
@@ -24,7 +28,7 @@ public class InputTool {
         }
     }
 
-    @Tool(description = "Press a keyboard shortcut, e.g. ctrl+s, alt+tab, ctrl+c")
+    @Tool(description = "Press a keyboard shortcut, e.g. ctrl+s, alt+tab, ctrl+c, ctrl+v, win+r")
     public String pressKeys(@ToolParam(description = "Key combination like ctrl+s or alt+tab") String keyCombo) {
         try {
             Robot robot = new Robot();
@@ -46,7 +50,8 @@ public class InputTool {
         }
     }
 
-    @Tool(description = "Switch to an application by name and type text into it. On Windows, uses Alt+Tab to switch.")
+    @Tool(description = "Switch to an application by name using Alt+Tab and then type text into it." +
+            " Note: this is a simple Alt+Tab — for precise window switching, use WindowTool.focusWindow instead")
     public String typeToApp(
             @ToolParam(description = "Application name (partial match) to switch to") String appName,
             @ToolParam(description = "Text to type after switching") String text) {
