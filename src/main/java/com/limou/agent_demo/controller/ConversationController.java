@@ -2,7 +2,6 @@ package com.limou.agent_demo.controller;
 
 import com.limou.agent_demo.dto.ConversationVO;
 import com.limou.agent_demo.entity.Conversation;
-import com.limou.agent_demo.entity.Message;
 import com.limou.agent_demo.mapper.ConversationMapper;
 import com.limou.agent_demo.mapper.MessageMapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -66,20 +65,16 @@ public class ConversationController {
     }
 
     private ConversationVO toVO(Conversation conv) {
-        List<Message> messages = messageMapper.selectByConversationId(conv.getId());
-        String firstMessage = messages.stream()
-                .filter(m -> "user".equals(m.getRole()))
-                .findFirst()
-                .map(Message::getContent)
-                .orElse("");
+        int messageCount = messageMapper.countByConversationId(conv.getId());
+        String firstMessage = messageMapper.findFirstUserMessageContent(conv.getId());
         return ConversationVO.builder()
                 .id(conv.getId())
                 .title(conv.getTitle())
                 .model(conv.getModel())
                 .createdAt(conv.getCreatedAt())
                 .updatedAt(conv.getUpdatedAt())
-                .messageCount(messages.size())
-                .firstMessage(firstMessage)
+                .messageCount(messageCount)
+                .firstMessage(firstMessage != null ? firstMessage : "")
                 .build();
     }
 }

@@ -13,9 +13,16 @@ import java.awt.event.KeyEvent;
 @Component
 public class InputTool {
 
+    private final ToolContext toolContext;
+
+    public InputTool(ToolContext toolContext) {
+        this.toolContext = toolContext;
+    }
+
     @Tool(description = "Type text into the currently focused window by simulating keyboard input." +
             " For large amounts of text, consider using ClipboardTool.typeViaClipboard instead — it is much faster")
     public String typeText(@ToolParam(description = "Text to type") String text) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         try {
             Robot robot = new Robot();
             robot.setAutoDelay(50);
@@ -30,6 +37,7 @@ public class InputTool {
 
     @Tool(description = "Press a keyboard shortcut, e.g. ctrl+s, alt+tab, ctrl+c, ctrl+v, win+r")
     public String pressKeys(@ToolParam(description = "Key combination like ctrl+s or alt+tab") String keyCombo) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         try {
             Robot robot = new Robot();
             robot.setAutoDelay(50);
@@ -55,6 +63,7 @@ public class InputTool {
     public String typeToApp(
             @ToolParam(description = "Application name (partial match) to switch to") String appName,
             @ToolParam(description = "Text to type after switching") String text) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         try {
             Robot robot = new Robot();
             robot.setAutoDelay(80);
