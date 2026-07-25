@@ -11,6 +11,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -22,15 +23,18 @@ public class AgentService {
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final ToolSafety toolSafety;
+    private final LocalRagService localRagService;
 
     public AgentService(ChatClient chatClient,
                         ConversationMapper conversationMapper,
                         MessageMapper messageMapper,
-                        ToolSafety toolSafety) {
+                        ToolSafety toolSafety,
+                        LocalRagService localRagService) {
         this.chatClient = chatClient;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.toolSafety = toolSafety;
+        this.localRagService = localRagService;
     }
 
     public Flux<ChatEvent> streamChat(ChatRequest request) {
@@ -79,6 +83,23 @@ public class AgentService {
                 sink.complete();
             }
         });
+    }
+
+    private String buildRagPrompt(String question) {
+        List<LocalRagService.RagReference> references = localRagService.search(question);
+        String context = localRagService.buildContext(references);
+
+        if (context.isBlank()) {
+            return question;
+        }
+
+        return """
+                【本地知识库资料】
+                %s
+
+                【用户问题】
+                %s
+                """.formatted(context, question);
     }
 
     private String getOrCreateConversationId(ChatRequest request) {
