@@ -1,5 +1,6 @@
 package com.limou.agent_demo.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.limou.agent_demo.decision.DecisionEngine;
 import com.limou.agent_demo.dto.ChatEvent;
 import com.limou.agent_demo.dto.ChatRequest;
@@ -7,12 +8,15 @@ import com.limou.agent_demo.entity.Conversation;
 import com.limou.agent_demo.entity.Message;
 import com.limou.agent_demo.mapper.ConversationMapper;
 import com.limou.agent_demo.mapper.MessageMapper;
+import com.limou.agent_demo.tool.ToolCallCapture;
+import com.limou.agent_demo.tool.ToolContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -36,19 +40,27 @@ public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     private final DecisionEngine decisionEngine;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final LocalRagService localRagService;
+    private final ToolContext toolContext;
+    private final ToolCallCapture toolCallCapture;
 
     public AgentService(DecisionEngine decisionEngine,
                         ConversationMapper conversationMapper,
                         MessageMapper messageMapper,
-                        LocalRagService localRagService) {
+                        LocalRagService localRagService,
+                        ToolContext toolContext,
+                        ToolCallCapture toolCallCapture) {
         this.decisionEngine = decisionEngine;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.localRagService = localRagService;
+        this.toolContext = toolContext;
+        this.toolCallCapture = toolCallCapture;
     }
 
     /**
@@ -67,16 +79,28 @@ public class AgentService {
         String enrichedMessage = buildRagPrompt(request.getMessage());
 
         // 3. 委托决策引擎（Plan → ReAct → Reflect）
+        // Flux.defer 确保 ThreadLocal 上下文在订阅线程上设置
         StringBuilder fullResponse = new StringBuilder();
+        boolean confirm = request.isConfirm();
 
-        return decisionEngine.decide(enrichedMessage, conversationId)
-                .doOnNext(event -> {
-                    if ("message".equals(event.getType()) && event.getData() != null) {
-                        fullResponse.append(event.getData().toString());
-                    }
-                })
-                .doOnComplete(() -> persistAssistantMessage(fullResponse.toString(), conversationId))
-                .doOnError(error -> log.error("[AgentService] 决策引擎出错", error));
+        return Flux.defer(() -> {
+            toolContext.begin(conversationId, confirm);
+
+            return decisionEngine.decide(enrichedMessage, conversationId)
+                    .doOnNext(event -> {
+                        if ("message".equals(event.getType()) && event.getData() != null) {
+                            fullResponse.append(event.getData().toString());
+                        }
+                    })
+                    .doOnComplete(() -> {
+                        List<Map<String, Object>> toolCalls = toolCallCapture.drain();
+                        persistAssistantMessage(fullResponse.toString(), conversationId, toolCalls);
+                    })
+                    .doFinally(signal -> {
+                        toolContext.clear();
+                        toolCallCapture.clear();
+                    });
+        });
     }
 
     // ==================== RAG ====================
@@ -127,12 +151,20 @@ public class AgentService {
         messageMapper.insert(msg);
     }
 
-    private void persistAssistantMessage(String content, String conversationId) {
+    private void persistAssistantMessage(String content, String conversationId,
+                                          List<Map<String, Object>> toolCalls) {
         Message msg = new Message();
         msg.setId(UUID.randomUUID().toString());
         msg.setConversationId(conversationId);
         msg.setRole("assistant");
         msg.setContent(content);
+        if (toolCalls != null && !toolCalls.isEmpty()) {
+            try {
+                msg.setToolCalls(objectMapper.writeValueAsString(toolCalls));
+            } catch (Exception e) {
+                log.warn("[AgentService] 序列化 toolCalls 失败", e);
+            }
+        }
         messageMapper.insert(msg);
     }
 
