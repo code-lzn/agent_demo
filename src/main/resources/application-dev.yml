@@ -12,6 +12,3 @@ spring:
       api-key: sk-2a6b211185034ac4b10a46d865d599ba
 
 # 文件工具安全白名单：允许访问的目录
-agent:
-  safety:
-    allowed-paths: ${user.home},${user.dir},C:/,D:/,E:/,F:/,G:/,H:/
