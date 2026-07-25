@@ -11,6 +11,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -22,15 +23,18 @@ public class AgentService {
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final ToolSafety toolSafety;
+    private final LocalRagService localRagService;
 
     public AgentService(ChatClient chatClient,
                         ConversationMapper conversationMapper,
                         MessageMapper messageMapper,
-                        ToolSafety toolSafety) {
+                        ToolSafety toolSafety,
+                        LocalRagService localRagService) {
         this.chatClient = chatClient;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.toolSafety = toolSafety;
+        this.localRagService = localRagService;
     }
 
     public Flux<ChatEvent> streamChat(ChatRequest request) {
@@ -42,9 +46,16 @@ public class AgentService {
                 sink.next(ChatEvent.thinking());
 
                 StringBuilder fullResponse = new StringBuilder();
+                String ragPrompt = buildRagPrompt(request.getMessage());
 
                 chatClient.prompt()
-                        .user(request.getMessage())
+                        .system("""
+                                你是一个本地知识库问答助手。
+                                回答时优先参考用户问题中提供的【本地知识库资料】。
+                                如果资料不足以回答，可以说明资料不足，并给出你能确定的内容。
+                                不要编造知识库里不存在的细节。
+                                """)
+                        .user(ragPrompt)
                         .advisors(a -> a.param(
                                 CHAT_MEMORY_CONVERSATION_ID,
                                 conversationId))
@@ -70,6 +81,23 @@ public class AgentService {
                 sink.complete();
             }
         });
+    }
+
+    private String buildRagPrompt(String question) {
+        List<LocalRagService.RagReference> references = localRagService.search(question);
+        String context = localRagService.buildContext(references);
+
+        if (context.isBlank()) {
+            return question;
+        }
+
+        return """
+                【本地知识库资料】
+                %s
+
+                【用户问题】
+                %s
+                """.formatted(context, question);
     }
 
     private String getOrCreateConversationId(ChatRequest request) {
