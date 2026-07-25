@@ -4,6 +4,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.awt.Desktop;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -259,6 +260,52 @@ public class FileTool {
             return sb.toString();
         } catch (IOException e) {
             return "Error getting file info: " + e.getMessage();
+        }
+    }
+
+    // ==================== 打开 ====================
+
+    @Tool(description = "用系统默认程序打开文件。\\n" +
+            "例如：.txt 会用记事本打开，.pdf 会用 PDF 阅读器打开，.jpg 会用图片查看器打开。" +
+            "不支持打开可执行文件（.exe、.bat 等），请使用 ProcessTool.openApp")
+    public String openFile(@ToolParam(description = "文件完整路径") String filePath) {
+        if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
+        try {
+            Path path = Path.of(filePath);
+            if (!Files.exists(path)) return "文件不存在: '" + filePath + "'";
+            if (Files.isDirectory(path)) return "该路径是目录，请使用 openDir: '" + filePath + "'";
+
+            // 禁止打开可执行文件，安全考虑
+            String name = path.getFileName().toString().toLowerCase();
+            if (name.endsWith(".exe") || name.endsWith(".bat") || name.endsWith(".cmd")
+                    || name.endsWith(".com") || name.endsWith(".msi")) {
+                return "拒绝打开可执行文件（安全限制），请使用 ProcessTool.openApp: '" + filePath + "'";
+            }
+
+            Desktop.getDesktop().open(path.toFile());
+            return "已用默认程序打开文件: '" + filePath + "'";
+        } catch (IOException e) {
+            return "打开文件失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(description = "在 Windows 资源管理器中打开目录。如果传入的是文件路径，则在资源管理器中打开该文件所在的目录并选中该文件")
+    public String openDir(@ToolParam(description = "目录路径（也可以是文件路径，会打开所在目录）") String dirPath) {
+        if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
+        try {
+            Path path = Path.of(dirPath);
+            if (!Files.exists(path)) return "路径不存在: '" + dirPath + "'";
+
+            if (Files.isDirectory(path)) {
+                // 打开目录
+                Desktop.getDesktop().open(path.toFile());
+            } else {
+                // 是文件，打开所在目录并选中文件
+                Runtime.getRuntime().exec(new String[]{"explorer", "/select,", path.toString()});
+            }
+            return "已在资源管理器中打开: '" + dirPath + "'";
+        } catch (IOException e) {
+            return "打开目录失败: " + e.getMessage();
         }
     }
 
