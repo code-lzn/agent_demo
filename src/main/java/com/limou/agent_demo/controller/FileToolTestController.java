@@ -140,6 +140,22 @@ public class FileToolTestController {
         return Map.of("result", fileTool.getFileInfo(path));
     }
 
+    // ==================== 打开 ====================
+
+    @PostMapping("/open-file")
+    @Operation(summary = "打开文件", description = "用系统默认程序打开文件（.txt→记事本、.pdf→PDF阅读器等）。不支持可执行文件")
+    public Map<String, String> openFile(
+            @Parameter(description = "文件完整路径") @RequestParam String path) {
+        return Map.of("result", fileTool.openFile(path));
+    }
+
+    @PostMapping("/open-dir")
+    @Operation(summary = "打开目录", description = "在 Windows 资源管理器中打开目录。传文件路径则打开所在目录并选中文件")
+    public Map<String, String> openDir(
+            @Parameter(description = "目录或文件路径") @RequestParam String path) {
+        return Map.of("result", fileTool.openDir(path));
+    }
+
     // ==================== 搜索 ====================
 
     @GetMapping("/search-in-file")
