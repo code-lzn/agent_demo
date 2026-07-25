@@ -11,6 +11,14 @@ spring:
         options:
           model: deepseek-chat
           temperature: 0.7
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.limou.agent_demo.entity
 
 server:
   port: 8123
