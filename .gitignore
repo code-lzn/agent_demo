@@ -19,6 +19,10 @@ target/
 *.iml
 *.ipr
 application-dev.yml
+docs/vector-store.json
+docs/rag-manifest.json
+chroma-data/
+.chroma-venv/
 ### NetBeans ###
 /nbproject/private/
 /nbbuild/
