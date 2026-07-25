@@ -2,7 +2,9 @@ package com.limou.agent_demo.config;
 
 import com.limou.agent_demo.tool.FileTool;
 import com.limou.agent_demo.tool.InputTool;
+import com.limou.agent_demo.tool.NotificationTool;
 import com.limou.agent_demo.tool.ProcessTool;
+import com.limou.agent_demo.tool.WebTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -31,9 +33,10 @@ public class AiConfig {
 
     @Bean
     public ToolCallbackProvider toolCallbackProvider(
-            ProcessTool processTool, FileTool fileTool, InputTool inputTool) {
+            ProcessTool processTool, FileTool fileTool, InputTool inputTool,
+            WebTool webTool, NotificationTool notificationTool) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(processTool, fileTool, inputTool)
+                .toolObjects(processTool, fileTool, inputTool, webTool, notificationTool)
                 .build();
     }
 }
