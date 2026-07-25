@@ -37,7 +37,9 @@ public class AiConfig {
             DatabaseTool databaseTool, CronTool cronTool,
             LogMonitorTool logMonitorTool, ImageTool imageTool,
             ArchiveTool archiveTool, DownloadTool downloadTool,
-            RegistryTool registryTool, PowerTool powerTool) {
+            RegistryTool registryTool, PowerTool powerTool,
+            EmailTool emailTool,
+            GrepTool grepTool, EditTool editTool, GitTool gitTool) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(processTool, fileTool, inputTool,
                         windowTool, clipboardTool, systemTool,
@@ -46,7 +48,9 @@ public class AiConfig {
                         databaseTool, cronTool,
                         logMonitorTool, imageTool,
                         archiveTool, downloadTool,
-                        registryTool, powerTool)
+                        registryTool, powerTool,
+                        emailTool,
+                        grepTool, editTool, gitTool)
                 .build();
     }
 }
