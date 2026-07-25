@@ -42,10 +42,18 @@ public class AgentService {
                 sink.next(ChatEvent.thinking());
 
                 StringBuilder fullResponse = new StringBuilder();
+                String ragPrompt = buildRagPrompt(request.getMessage());
 
                 chatClient.prompt()
                         .system("你是 Windows 桌面 AI 助手，可以直接控制这台电脑。用户要你操作电脑时，立即调用对应的工具函数完成任务，严禁说你做不到或编造伪代码。每次操作前用一句话说明，操作后用中文汇报结果。")
                         .user(request.getMessage())
+                        .system("""
+                                你是一个本地知识库问答助手。
+                                回答时优先参考用户问题中提供的【本地知识库资料】。
+                                如果资料不足以回答，可以说明资料不足，并给出你能确定的内容。
+                                不要编造知识库里不存在的细节。
+                                """)
+                        .user(ragPrompt)
                         .advisors(a -> a.param(
                                 CHAT_MEMORY_CONVERSATION_ID,
                                 conversationId))
