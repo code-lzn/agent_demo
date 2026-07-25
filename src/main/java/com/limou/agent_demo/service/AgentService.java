@@ -69,7 +69,7 @@ public class AgentService {
         // 3. 委托决策引擎（Plan → ReAct → Reflect）
         StringBuilder fullResponse = new StringBuilder();
 
-        return decisionEngine.decide(enrichedMessage, conversationId)
+        return decisionEngine.decide(enrichedMessage, conversationId, request.isConfirm())
                 .doOnNext(event -> {
                     if ("message".equals(event.getType()) && event.getData() != null) {
                         fullResponse.append(event.getData().toString());

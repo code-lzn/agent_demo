@@ -21,9 +21,6 @@ import java.util.UUID;
  *   AgentService:  用户消息 → ChatClient（简单 tool calling） → 响应  + MySQL 持久化
  *   DecisionService: 用户消息 → Planner → ReActExecutor(多轮) → Reflector → 响应  （无 DB）
  * </pre>
- *
- * @author lubo
- * @since 2026-07-25
  */
 @Service
 public class DecisionService {
@@ -31,9 +28,11 @@ public class DecisionService {
     private static final Logger log = LoggerFactory.getLogger(DecisionService.class);
 
     private final DecisionEngine decisionEngine;
+    private final AgentSecurityGuard securityGuard;
 
-    public DecisionService(DecisionEngine decisionEngine) {
+    public DecisionService(DecisionEngine decisionEngine, AgentSecurityGuard securityGuard) {
         this.decisionEngine = decisionEngine;
+        this.securityGuard = securityGuard;
     }
 
     /**
@@ -52,7 +51,8 @@ public class DecisionService {
                 ? request.getConversationId()
                 : UUID.randomUUID().toString();
 
-        return decisionEngine.decide(request.getMessage(), conversationId)
+        // 将 ChatRequest.confirm 传递给决策引擎（用于安全③敏感操作确认）
+        return decisionEngine.decide(request.getMessage(), conversationId, request.isConfirm())
                 .doOnError(error -> log.error("[DecisionService] 决策引擎出错", error));
     }
 
