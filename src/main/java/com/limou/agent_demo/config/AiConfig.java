@@ -1,12 +1,6 @@
 package com.limou.agent_demo.config;
 
-import com.limou.agent_demo.tool.FileTool;
-import com.limou.agent_demo.tool.InputTool;
-import com.limou.agent_demo.tool.NotificationTool;
-import com.limou.agent_demo.tool.ProcessTool;
-import com.limou.agent_demo.tool.WebTool;
-import com.limou.agent_demo.tool.SystemTool;
-import com.limou.agent_demo.tool.WindowTool;
+import com.limou.agent_demo.tool.*;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -27,7 +21,7 @@ public class AiConfig {
     }
 
     @Bean
-    public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory) {
+    public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory,ToolCallbackProvider toolCallbackProvider) {
         return builder
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
                 .defaultTools(toolCallbackProvider)
@@ -37,13 +31,9 @@ public class AiConfig {
     @Bean
     public ToolCallbackProvider toolCallbackProvider(
             ProcessTool processTool, FileTool fileTool, InputTool inputTool,
-            WebTool webTool, NotificationTool notificationTool) {
-            ProcessTool processTool, FileTool fileTool, InputTool inputTool,
-            WindowTool windowTool, ClipboardTool clipboardTool, SystemTool systemTool) {
+            WebTool webTool, NotificationTool notificationTool, WindowTool windowTool, ClipboardTool clipboardTool, SystemTool systemTool) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(processTool, fileTool, inputTool, webTool, notificationTool)
-                .toolObjects(processTool, fileTool, inputTool,
-                        windowTool, clipboardTool, systemTool)
+                .toolObjects(processTool, fileTool, inputTool, webTool, notificationTool, windowTool, clipboardTool, systemTool)
                 .build();
     }
 }
