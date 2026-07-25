@@ -4,17 +4,27 @@ spring:
   profiles:
     active: dev
   ai:
+    # 远程 LLM（DeepSeek，仅对话，不做 Embedding）
     openai:
       api-key: ${OPENAI_API_KEY}
       base-url: https://api.deepseek.com
       chat:
         options:
-          model: deepseek-chat
+          model: deepseek-v4-flash
           temperature: 0.7
-      embedding:
-        base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
-        api-key: ${EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:}}
-        model: ${EMBEDDING_MODEL:text-embedding-v4}
+    # 本地 Embedding（ONNX），零网络延迟
+    model:
+      embedding: transformers
+    embedding:
+      transformer:
+        cache:
+          directory: D:/agent/.cache/onnx-models
+        onnx:
+          modelUri: https://hf-mirror.com/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
+        tokenizer:
+          uri: https://hf-mirror.com/sentence-transformers/all-MiniLM-L6-v2/raw/main/tokenizer.json
+          options:
+            padding: true
     vectorstore:
       chroma:
         initialize-schema: true
@@ -57,7 +67,7 @@ agent:
     chunk-size: 900
     chunk-overlap: 120
     top-k: 5
-    min-score: 0.0
+    min-score: 0.35
     rebuild-on-startup: false
     auto-index-on-startup: true
     batch-size: 20

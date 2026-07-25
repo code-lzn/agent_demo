@@ -165,20 +165,16 @@ public class TaskPlanner {
     }
 
     /**
-     * 构建降级计划 —— 直接执行用户请求，不分步骤。
+     * 构建降级计划 —— 返回空步骤，由 DecisionEngine 快速路径直接处理。
+     * <p>
+     * 空步骤意味着无需分步执行（闲聊/简单问答），Engine 会跳过 Plan→Reflect 循环，
+     * 直接调用 ReActExecutor 一轮返回，避免"反思→重试"的死循环。
      */
     private ExecutionPlan buildFallbackPlan(String userMessage) {
-        PlanStep singleStep = PlanStep.builder()
-                .order(0)
-                .description("执行用户请求: " + userMessage)
-                .expectedTool(null)
-                .expectedOutcome("满足用户的需求")
-                .build();
-
         return ExecutionPlan.builder()
                 .goal(userMessage)
-                .reasoning("无法进行详细规划，直接执行用户请求")
-                .steps(List.of(singleStep))
+                .reasoning("简单对话，无需分步，直接回复")
+                .steps(List.of())
                 .build();
     }
 
