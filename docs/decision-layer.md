@@ -1,269 +1,396 @@
 # 决策层设计文档
 
-## 一、概述
+## 一、架构定位
 
-决策层是桌面 Agent 四层架构中的**大脑**，负责接收用户请求、调用 LLM 思考、解析决策结果。它不执行具体操作，只负责"思考"。
-
-### 四层架构
+决策层是 AI Agent 四层架构中的**大脑**，负责接收感知层传来的消息、调用 LLM 进行 ReAct 推理、产出行动计划并驱动执行。
 
 ```
-用户 → [感知层] → [决策层] → [执行层] → [数据层]
-                          ↕
-                   安全防护 (5层)
-                          ↕
-                   终止判断 (5种条件)
+┌─────────────────────────────────────────┐
+│             感知层 (Perception)          │
+│     AgentService: RAG检索 + 消息增强      │
+└──────────────────┬──────────────────────┘
+                   ↓
+┌─────────────────────────────────────────┐
+│             决策层 (Decision) ← 你的模块   │
+│     LLM + ReAct规划器 → 行动计划          │
+└──────────────────┬──────────────────────┘
+                   ↓
+┌─────────────────────────────────────────┐
+│             执行层 (Execution)            │
+│     Spring AI ChatClient + 工具调用       │
+└──────────────────┬──────────────────────┘
+                   ↓
+┌─────────────────────────────────────────┐
+│             数据层 (Data)                 │
+│     ChatMemory(上下文) + MySQL(持久化)    │
+└─────────────────────────────────────────┘
 ```
-
-| 层 | 职责 | 对应模块 |
-|----|------|----------|
-| **感知层** | 构建系统提示词、加载历史消息、组装消息列表 | `AgentOrchestrator` (内联) |
-| **决策层** | 调用 LLM 思考，解析返回的决策类型 | `DecisionLayer` |
-| **执行层** | 根据决策结果执行具体工具 | `ToolCallbackProvider` → `ProcessTool` / `FileTool` / `InputTool` 等 |
-| **数据层** | 持久化会话和消息 | `ConversationMapper` / `MessageMapper` |
-
----
 
 ## 二、模块清单
 
-| 包 | 文件 | 类型 | 职责 |
-|----|------|------|------|
-| `decision` | `Decision.java` | 值对象 | 决策结果：ANSWER / TOOL_CALL / NONE |
-| `decision` | `ToolCallRequest.java` | 值对象 | 工具调用请求（id / 工具名 / 参数JSON） |
-| `decision` | `AgentState.java` | 枚举 | 6 种状态：PERCEIVING→DECIDING→EXECUTING→COMPLETED/FAILED/BLOCKED |
-| `decision` | `AgentSession.java` | 值对象 | 会话状态：轮次、工具调用频率控制 |
-| `decision` | `TerminationDecision.java` | 值对象 | 终止判断结果：是否停止 + 原因 |
-| `decision` | `TerminationEvaluator.java` | 组件 | 5 种终止条件判断 |
-| `decision` | `SecurityVerdict.java` | 值对象 | 安全验证结果：拦截/通过 |
-| `decision` | `AgentSecurityGuard.java` | 组件 | 五层安全防护 |
-| `decision` | `DecisionLayer.java` | 组件 | **决策引擎**：LLM 调用 + 响应解析 |
-| `service` | `AgentOrchestrator.java` | 组件 | **编排器**：四层总控，SSE 事件流 |
+```
+com.limou.agent_demo.decision/
+├── DecisionEngine.java             主协调器
+├── DecisionService.java            服务层（无DB依赖）
+├── DecisionController.java         REST端点 /api/decision/stream
+├── model/
+│   ├── PlanStep.java               单步骤模型 + 状态流转
+│   ├── ExecutionPlan.java          执行计划 + 进度跟踪
+│   ├── ReActCycle.java             单次 Thought→Action→Observation
+│   └── ReflectionResult.java       反思判定结果
+├── planner/
+│   └── TaskPlanner.java            LLM意图分析 → JSON执行计划
+├── react/
+│   └── ReActExecutor.java          ReAct提示词注入 + 流式执行
+├── reflector/
+│   └── ResultReflector.java        双模式反思（LLM语义 + 规则降级）
+└── prompt/
+    └── DecisionPrompts.java        三套核心提示词模板
+```
 
----
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `DecisionEngine.java` | 313 | Plan→Execute→Reflect 主循环，最多5轮 |
+| `DecisionService.java` | 63 | SSE流式服务，不依赖数据库 |
+| `DecisionController.java` | 91 | REST端点，返回SSE事件流 |
+| `PlanStep.java` | 91 | 步骤模型：描述/工具/状态(PENDING→COMPLETED/FAILED) |
+| `ExecutionPlan.java` | 125 | 计划模型：目标/推理/步骤列表/进度摘要 |
+| `ReActCycle.java` | 78 | 单次推理周期记录 |
+| `ReflectionResult.java` | 72 | 反思结果：完成/重规划/追问/置信度 |
+| `TaskPlanner.java` | 249 | LLM分析意图，输出JSON计划，失败降级为单步 |
+| `ReActExecutor.java` | 265 | 注入ReAct提示词，驱动ChatClient流式执行 |
+| `ResultReflector.java` | 274 | LLM语义反思 + 启发式规则反思双模式 |
+| `DecisionPrompts.java` | 226 | ReAct/Planner/Reflector三套提示词模板 |
 
 ## 三、核心流程
 
 ### 3.1 完整请求生命周期
 
 ```
-ChatRequest
-    │
-    ▼
-┌─────────────────────────────────────────────────┐
-│ AgentOrchestrator.execute()                      │
-│                                                   │
-│  阶段 0 (数据层)                                  │
-│  ├─ 获取/创建 Conversation                        │
-│  └─ 创建 AgentSession                             │
-│                                                   │
-│  阶段 1 (感知层)                                  │
-│  ├─ buildToolDescriptions() → 43 个工具文本描述    │
-│  ├─ buildSystemPrompt() → 系统提示词 + 工具列表    │
-│  ├─ 加载历史消息 (最近20条)                        │
-│  └─ 安全 ①: Prompt 注入检测                       │
-│                                                   │
-│  阶段 2 (决策循环, 最多 10 轮)                     │
-│  ┌──────────────────────────────────────┐         │
-│  │ ① LLM 思考 (DecisionLayer.decide()) │         │
-│  │ ② 终止判断 (TerminationEvaluator)  │         │
-│  │ ③ 如果 TOOL_CALL:                   │         │
-│  │    ├─ 安全 ②③④: 参数/权限/频率       │         │
-│  │    ├─ 执行工具 → ToolResponseMessage │         │
-│  │    └─ 继续循环                      │         │
-│  │ ④ 如果 ANSWER: 输出过滤 → 跳出循环  │         │
-│  │ ⑤ 如果 NONE: 异常处理 → 跳出循环    │         │
-│  └──────────────────────────────────────┘         │
-│                                                   │
-│  阶段 3 (数据层)                                  │
-│  ├─ persistMessages()                             │
-│  ├─ 更新会话标题                                  │
-│  └─ sink.complete()                               │
-└─────────────────────────────────────────────────┘
-    │
-    ▼
-SSE Event Stream (Flux<ChatEvent>)
+POST /api/chat/stream  (或 /api/decision/stream)
+        │
+        ▼
+┌─ AgentService.streamChat() ───────────────────────────┐
+│  1. RAG检索 → LocalRagService.search()                 │
+│  2. 会话管理 → MySQL查/建conversation                    │
+│  3. 委托决策 → decisionEngine.decide(enrichedMsg)       │
+│  4. 持久化   → MySQL保存assistant回复                    │
+└──────────────────────┬────────────────────────────────┘
+                       │
+                       ▼
+┌─ DecisionEngine.decide() ─────────────────────────────┐
+│                                                        │
+│  ┌─ Phase 1: PLAN ──────────────────────────────┐    │
+│  │  TaskPlanner.plan(userMessage)                 │    │
+│  │    → ChatClient(无工具) 调用LLM                 │    │
+│  │    → LLM输出JSON: {goal, reasoning, steps[]}   │    │
+│  │    → 解析为ExecutionPlan                       │    │
+│  │    → SSE: "📋 执行计划: 目标+步骤"             │    │
+│  └───────────────────────────────────────────────┘    │
+│                       │                                │
+│  ┌─ Phase 2: EXECUTE ───────────────────────────┐    │
+│  │  for round in 1..maxRounds:                    │    │
+│  │    ReActExecutor.executeRound()                │    │
+│  │      → 注入ReAct系统提示词(首轮)                 │    │
+│  │      → 嵌入执行计划到用户消息                    │    │
+│  │      → ChatClient(含工具).stream().content()    │    │
+│  │      → Spring AI内部处理工具调用循环             │    │
+│  │      → SSE: 实时流式推送文本                    │    │
+│  └───────────────────────────────────────────────┘    │
+│                       │                                │
+│  ┌─ Phase 3: REFLECT ──────────────────────────┐    │
+│  │  ResultReflector.reflect(goal, response)       │    │
+│  │    → LLM模式: ChatClient分析→JSON              │    │
+│  │    → 规则模式: 启发式关键词检测(降级方案)       │    │
+│  │    → 输出ReflectionResult                      │    │
+│  │                                                │    │
+│  │  判定逻辑:                                      │    │
+│  │    complete=true        → 结束循环              │    │
+│  │    needsReplan=true     → 回到Phase 1重新规划   │    │
+│  │    needsClarification   → 追问用户后结束        │    │
+│  │    其他                  → 回到Phase 2下一轮     │    │
+│  └───────────────────────────────────────────────┘    │
+│                                                        │
+│  最大5轮，单轮超时180秒                                   │
+└────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 决策循环详述
-
-每一轮循环中：
-
-1. **LLM 思考** — `DecisionLayer.decide(messages)` 将当前消息列表发给 `ChatModel.call()`，返回原始响应
-2. **追加原始消息** — 将 LLM 返回的 `AssistantMessage` 追加到消息列表（保留 `reasoning_content`、`toolCalls` 等字段）
-3. **解析决策** — `parseResponse()` 按优先级检查：
-   - 结构化 `tool_calls`（原生 function calling）
-   - 文本 `TOOL_CALL:` 格式
-   - DeepSeek DSML XML 格式
-   - 直接回答文本
-4. **终止判断** — `TerminationEvaluator` 检查 5 种条件
-5. **处理决策** — 执行工具或输出回答
-
-### 3.3 SSE 事件流
+### 3.2 Plan→Execute→Reflect 循环示意
 
 ```
-event: thinking      → "Agent is thinking..."
-event: decision      → {"round": 1, "toolCallCount": 0}
-event: tool_call     → {"tool": "openApp", "args": {...}}
-event: tool_result   → {"result": "Successfully launched..."}
-event: blocked       → {"reason": "文件路径不在白名单内"}
-event: message       → "已完成操作。"
-event: done          → {"conversationId": "xxx", "messageId": "yyy"}
-event: error         → {"message": "系统错误"}
+用户: "帮我读取test.txt，计算文件内容的行数，把结果写入report.txt"
+
+Phase 1 - PLAN:
+  TaskPlanner → LLM输出:
+  {
+    "goal": "读取test.txt并计算行数后写入报告",
+    "steps": [
+      {"order":0, "description":"读取test.txt", "expectedTool":"readFile"},
+      {"order":1, "description":"计算行数", "expectedTool":"countLines"},
+      {"order":2, "description":"写入结果", "expectedTool":"writeFile"}
+    ]
+  }
+  SSE → 📋 展示计划
+
+Phase 2 - EXECUTE (Round 1):
+  ReActExecutor → ChatClient:
+    Thought: 需要先读取文件
+    Action: readFile("test.txt")
+    Observation: "文件内容: hello world\nfoo bar"
+    
+    Thought: 需要统计行数
+    Action: countLines("test.txt")
+    Observation: "2 行"
+    
+    Thought: 将结果写入报告
+    Action: writeFile("report.txt", "test.txt 共 2 行")
+    Observation: "写入成功"
+    
+    FinalAnswer: "📌步骤1完成...✅步骤2完成...✅步骤3完成..."
+  SSE → 实时流式推送
+
+Phase 3 - REFLECT:
+  ResultReflector → LLM分析:
+  {"complete":true, "confidence":0.95, "summary":"三个步骤全部完成"}
+  SSE → 📋 ✅ 任务完成 (置信度: 95%)
 ```
 
----
+## 四、核心组件详解
 
-## 四、决策引擎 (DecisionLayer)
-
-### 4.1 职责
-
-- 接收消息列表
-- 调用 `ChatModel.call(Prompt)`（不传 tool options，工具定义在系统提示词中描述）
-- 将原始 `AssistantMessage` 追加到消息列表（保留 `reasoning_content`）
-- 解析响应为 `Decision`
-
-### 4.2 三种决策格式
-
-| 格式 | 触发条件 | 解析方式 |
-|------|----------|----------|
-| **结构化 tool_calls** | LLM 通过原生 function calling 返回 | `AssistantMessage.getToolCalls()` |
-| **文本 TOOL_CALL** | 系统提示词引导 LLM 输出 | 正则 `TOOL_CALL: {"tool": "...", "arguments": {...}}` |
-| **DSML XML** | DeepSeek 模型原生输出 | 正则 `<invoke name="toolName">` + `<parameter>` |
-| **直接回答** | 无需调用工具 | 直接返回文本 |
-
-### 4.3 消息列表维护
-
-`DecisionLayer.decide()` 在返回决策前会将原始 `AssistantMessage` 追加到消息列表：
-
-- **结构化 tool_calls** → 原样追加（保留 `reasoning_content`）
-- **文本 TOOL_CALL** → 新建 `AssistantMessage` + 注入 `toolCalls` 字段（供后续 `ToolResponseMessage` 关联）
-- **直接回答** → 原样追加
-
----
-
-## 五、终止判断 (TerminationEvaluator)
-
-5 种终止条件，满足任一即停止循环：
-
-| # | 条件 | 阈值 | 说明 |
-|---|------|------|------|
-| 1 | 最大轮数 | MAX_ROUNDS = 10 | 防止无限循环 |
-| 2 | LLM 直接回答 | 决策类型为 ANSWER | 正常结束 |
-| 3 | 死循环检测 | 连续 2 轮相同工具+相同参数 | 防止 LLM 反复调同一工具 |
-| 4 | 无有效输出 | 决策类型为 NONE | LLM 异常情况 |
-| 5 | 超时 | 60 秒 | 长时间无响应 |
-
----
-
-## 六、五层安全防护 (AgentSecurityGuard)
-
-| 层 | 防护 | 实现 | 触发 |
-|----|------|------|------|
-| ① | **Prompt 注入检测** | 关键词黑名单（中英文） | 用户输入含越狱/注入词 |
-| ② | **工具参数校验** | 空参数/超长/白名单路径/黑名单命令 | LLM 生成非法参数 |
-| ③ | **敏感操作确认** | `confirm=true` 开关 | 写文件/删文件/关进程等 |
-| ④ | **工具调用频率控制** | 同工具≤3次，总计≤10次 | LLM 频繁调同一工具 |
-| ⑤ | **输出内容过滤** | 正则匹配手机号/API Key/密码 | LLM 回复含敏感信息 |
-
-与 `ToolSafety` 的关系：
-- `ToolSafety`（底层守卫）：路径白名单、命令黑名单
-- `AgentSecurityGuard`（上层策略）：注入检测、参数校验、操作确认、频率控制、输出过滤
-
----
-
-## 七、状态管理 (AgentSession + AgentState)
-
-### 7.1 状态流转
-
-```
-PERCEIVING ──→ DECIDING ──→ EXECUTING ──→ DECIDING ──→ ... ──→ COMPLETED
-                                                              ├── FAILED
-                                                              └── BLOCKED
-```
-
-### 7.2 频率控制
-
-| 限制 | 值 | 说明 |
-|------|-----|------|
-| 同工具最大调用次数 | 3 | 防止死循环 |
-| 总计最大调用次数 | 10 | 防止无限调工具 |
-| 最大决策轮数 | 10 | 循环上限 |
-
----
-
-## 八、编排器 (AgentOrchestrator)
-
-### 8.1 依赖注入
+### 4.1 DecisionEngine — 主协调器
 
 ```java
-AgentOrchestrator(
-    DecisionLayer decisionLayer,          // 决策引擎
-    TerminationEvaluator terminationEvaluator,  // 终止判断
-    AgentSecurityGuard securityGuard,     // 安全防护
-    ConversationMapper conversationMapper, // 会话持久化
-    MessageMapper messageMapper,          // 消息持久化
-    ToolCallbackProvider toolCallbackProvider  // 工具注册中心
-)
+@Component
+public class DecisionEngine {
+    // 依赖: TaskPlanner + ReActExecutor + ResultReflector
+
+    public Flux<ChatEvent> decide(String userMessage, String conversationId) {
+        // Phase 1: Plan
+        ExecutionPlan plan = planner.plan(userMessage);
+        sink.next(formatPlanMessage(plan));
+
+        // Phase 2-3: Execute + Reflect Loop
+        while (!done && round < plan.getMaxRounds()) {
+            round++;
+            // 执行一轮（流式输出 + 收集完整响应）
+            reActExecutor.executeRound(prompt, conversationId, round, isFirstRound);
+            
+            // 等待本轮完成
+            latch.await(ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            
+            // 反思
+            ReflectionResult reflection = reflector.reflect(userMessage, response);
+            
+            if (reflection.shouldStop()) break;
+            if (reflection.needsReplan()) plan = planner.replan(plan, failReason);
+            // else: continue loop
+        }
+        sink.complete();
+    }
+}
 ```
 
-### 8.2 系统提示词构建
+安全控制:
+- **最大轮次**: 默认5轮，防止无限循环
+- **单轮超时**: 180秒，超时取消本轮订阅
+- **错误隔离**: 单轮失败触发replan，不中断整体流程
 
-两步构建：
-1. `buildToolDescriptions()` — 遍历 `ToolCallbackProvider` 中注册的所有工具，提取名称、描述、参数名
-2. `buildSystemPrompt()` — 嵌入到系统提示词中，包含核心规则和工具调用格式说明
+### 4.2 TaskPlanner — 任务规划器
 
-### 8.3 工具调用容错
+使用独立的 `ChatClient`（无工具绑定），让 LLM 做"战略思考"：
 
-- JSON 参数预处理：转义未转义的换行符和制表符
-- 安全拦截时仍生成 `ToolResponseMessage`（避免 API 报错 "insufficient tool messages"）
-- 工具执行异常时返回友好错误信息
+```
+输入: "帮我读取test.txt并计算行数"
+  ↓
+ChatClient(无工具).prompt()
+  .system(PLANNER_SYSTEM_PROMPT)  ← 要求输出JSON格式计划
+  .user("用户请求：" + message)
+  .call()
+  ↓
+输出: {"goal":"...", "reasoning":"...", "steps":[{...}]}
+  ↓
+Jackson解析 → ExecutionPlan
+```
 
----
+失败降级：LLM返回非JSON时，自动构建单步Fallback计划。
 
-## 九、数据模型
+### 4.3 ReActExecutor — ReAct执行器
 
-### Decision 类
+注入 ReAct 系统提示词，引导 LLM 按 Thought→Action→Observation 循环推理：
 
 ```java
-Decision.Type { ANSWER, TOOL_CALL, NONE }
+public Flux<ChatEvent> executeRound(userMessage, conversationId, roundNumber, isFirstRound) {
+    String systemPrompt = isFirstRound
+        ? REACT_SYSTEM_PROMPT       // 完整ReAct提示词 + 工具列表
+        : buildContinuationReminder // 简短续接提醒
 
-Decision.answer("text")       → Type=ANSWER,  answer="text"
-Decision.toolCall([requests]) → Type=TOOL_CALL, toolCalls=[...]
-Decision.none()               → Type=NONE
+    return chatClient.prompt()
+        .system(systemPrompt)
+        .user(userMessage)          // 首轮含计划步骤
+        .advisors(chatMemory)       // 上下文记忆
+        .stream().content();        // Spring AI自动处理工具调用
+}
 ```
 
-### ToolCallRequest 类
+关键设计：
+- **每轮都注入system prompt**：ChatMemory不存储system prompt，需每轮重注
+- **首轮嵌入执行计划**：`buildFirstRoundPrompt()` 将计划步骤拼入user消息
+- **步骤标注格式**：提示词要求LLM用 `📌步骤1/3` `✅步骤1完成` 标注进度
+
+### 4.4 ResultReflector — 结果反思器
+
+双模式反思：
+
+| 模式 | 实现 | 优点 | 缺点 |
+|------|------|------|------|
+| LLM反思 | ChatClient分析→JSON判定 | 语义准确 | 增加延迟+Token消耗 |
+| 规则反思 | 启发式关键词检测 | 零延迟 | 精度较低 |
+
+判定维度：
+- `complete` → 任务是否完成
+- `needsReplan` → 是否需要重新规划
+- `needsUserClarification` → 是否需要追问用户
+- `confidence` → 置信度 0.0~1.0
+
+规则模式关键词：
+- **未完成标记**: "我需要更多信息"、"首先"、"第一步"...
+- **失败标记**: "失败"、"错误"、"Access denied"、"Failed to"...
+
+## 五、数据模型
+
+### 5.1 ExecutionPlan
 
 ```java
-ToolCallRequest(
-    String id,           // 调用唯一 ID（LLM 生成）
-    String toolName,     // 工具名，如 "openApp"
-    String arguments     // 参数 JSON 字符串
-)
+ExecutionPlan {
+    String id;                    // UUID
+    String goal;                  // 用户核心目标
+    String reasoning;             // 推理过程
+    List<PlanStep> steps;         // 有序步骤列表
+    PlanStatus status;            // CREATED→IN_PROGRESS→COMPLETED/FAILED
+    int maxRounds;                // 最大执行轮次(默认5)
+}
 ```
 
-### ChatEvent (SSE 事件)
+### 5.2 PlanStep
 
 ```java
-ChatEvent.thinking()          → type="thinking"
-ChatEvent.toolCall(tool, args) → type="tool_call"
-ChatEvent.toolResult(result)   → type="tool_result"
-ChatEvent.message(text)        → type="message"
-ChatEvent.done(convId, msgId)  → type="done"
-ChatEvent.error(msg)           → type="error"
-ChatEvent.blocked(reason)      → type="blocked"
-ChatEvent.decision(type, data) → type="decision"
+PlanStep {
+    int order;                    // 步骤序号
+    String description;           // 步骤描述
+    String expectedTool;          // 预期工具名
+    String expectedOutcome;       // 预期产出
+    StepStatus status;            // PENDING→IN_PROGRESS→COMPLETED/FAILED/SKIPPED
+    String observation;           // 实际执行结果
+}
 ```
 
----
+### 5.3 ReActCycle
 
-## 十、已知问题与边界处理
+```java
+ReActCycle {
+    int cycleNumber;              // 周期序号
+    String thought;               // LLM推理文本
+    String action;                // 工具名 或 "final_answer"
+    String actionInput;           // 工具参数
+    String observation;           // 工具返回结果
+    boolean isFinal;              // 是否为终止周期
+}
+```
 
-| 问题 | 处理方式 |
-|------|----------|
-| DeepSeek `reasoning_content` 未回传 | 保留原始 `AssistantMessage`（含 metadata/properties） |
-| DeepSeek DSML XML 格式 | 正则解析 `<invoke name="">参数</invoke>` |
-| LLM 生成未转义换行符的 JSON | `executeTool()` 中预替换 `\n` → `\\n` |
-| 工具执行完成后 LLM 不回答 | 降级使用工具结果摘要 "已完成操作。" |
-| 安全拦截后 tool_call 无对应响应 | 仍生成 `ToolResponseMessage`（含 BLOCKED 信息） |
-| Prompt 注入 | 中英文关键词黑名单 |
-| 死循环 | 同工具 + 同参数连续 2 轮触发终止 |
+### 5.4 ReflectionResult
+
+```java
+ReflectionResult {
+    boolean complete;             // 任务是否完成
+    Boolean needsReplan;          // 是否需要重新规划
+    Boolean needsUserClarification; // 是否需要追问用户
+    String summary;               // 执行摘要
+    String nextAction;            // 建议下一步
+    double confidence;            // 置信度 0.0~1.0
+    String failureReason;         // 失败原因
+    String clarificationQuestion; // 追问问题
+}
+```
+
+## 六、提示词工程
+
+三套核心提示词：
+
+### 6.1 REACT_SYSTEM_PROMPT
+
+```
+角色: AI Agent，运行在Windows电脑上
+流程: Thought → Action → Observation → 重复/结束
+格式: 📌步骤1/3: [描述] / ✅步骤完成: [结果]
+工具列表: (动态注入ToolCallbackProvider中的所有工具)
+约束: 每次一个工具、精确参数、错误重试、中文回答
+```
+
+### 6.2 PLANNER_SYSTEM_PROMPT
+
+```
+角色: 任务规划专家
+要求: 分析意图 → 分解为1~5步 → 标注工具 → 输出JSON
+输出: {"goal":"...", "reasoning":"...", "steps":[{order,description,expectedTool,expectedOutcome}]}
+约束: 只有纯闲聊才允许空steps，涉及文件/程序/输入必须列步骤
+```
+
+### 6.3 REFLECTOR_SYSTEM_PROMPT
+
+```
+角色: 执行审核专家
+判断: 已完成/需继续/需重新规划/需用户澄清
+输出: {"complete":bool, "needsReplan":bool, "confidence":0.0~1.0, ...}
+```
+
+## 七、与其它层的交互
+
+### 7.1 从感知层接收
+
+```
+AgentService.streamChat(request)
+  → RAG检索 → 消息增强
+  → decisionEngine.decide(enrichedMessage, conversationId)
+```
+
+决策层不直接处理原始用户消息，而是接收感知层增强后的消息（含RAG上下文）。
+
+### 7.2 驱动执行层
+
+决策层不直接调用工具。它通过 `ChatClient`（含 `ToolCallbackProvider`）将工具列表注入 LLM，由 Spring AI 框架自动处理工具调用：
+
+```
+ReActExecutor → ChatClient.prompt()
+  → LLM决定调用 readFile("test.txt")
+  → Spring AI拦截tool_call → 执行FileTool.readFile()
+  → 结果回传LLM → LLM继续推理
+```
+
+### 7.3 SSE事件流
+
+```
+event: thinking → "Agent is thinking..."
+event: message  → "📋 执行计划: ..."      (计划展示)
+event: message  → "📌步骤1/3: 读取文件"    (实时执行)
+event: message  → "✅步骤1完成: 2行"      (步骤完成)
+event: message  → "📋 反思: ✅ 任务完成"   (反思结果)
+event: done     → {"conversationId":"..."} (流结束)
+event: error    → {"message":"..."}        (异常)
+```
+
+## 八、调用入口
+
+两个端点，都走决策引擎：
+
+| 端点 | 特点 |
+|------|------|
+| `POST /api/chat/stream` | 经AgentService → RAG增强 + MySQL持久化 + 决策引擎 |
+| `POST /api/decision/stream` | 经DecisionService → 纯决策引擎，无DB依赖 |
+
+## 九、设计原则
+
+1. **不修改已有代码**: 决策层作为独立package，复用已有DTO/Entity
+2. **不依赖数据库**: ChatMemory管理上下文，后续可切换向量库
+3. **Plan→Execute→Reflect**: 结构化决策循环，非一次性LLM调用
+4. **双模式反思**: LLM语义分析为主，规则降级兜底
+5. **安全边界**: 最大轮次、单轮超时、错误隔离三重保护
