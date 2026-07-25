@@ -9,6 +9,4 @@ spring:
 
   ai:
     openai:
-      api-key: sk-2a6b211185034ac4b10a46d865d599ba
-
-# 文件工具安全白名单：允许访问的目录
+      api-key: sk-5a8f7a44563e4f4faa0bdfafaa88aa4c
