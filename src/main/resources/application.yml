@@ -3,6 +3,14 @@ spring:
     name: Agent_demo
   profiles:
     active: dev
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: https://api.deepseek.com
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7
 
 server:
   port: 8123
