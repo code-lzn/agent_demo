@@ -1,5 +1,7 @@
 package com.limou.agent_demo.tool;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -10,6 +12,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProcessTool {
 
+    private static final Logger log = LoggerFactory.getLogger(ProcessTool.class);
+
     private final ToolSafety safety;
 
     public ProcessTool(ToolSafety safety) {
@@ -18,6 +22,7 @@ public class ProcessTool {
 
     @Tool(description = "Launch an application or executable on this computer")
     public String openApp(@ToolParam(description = "Full path to the executable, e.g. notepad.exe or C:\\app\\my.exe") String appPath) {
+        log.info("🔧 openApp: {}", appPath);
         if (safety.isCommandBlocked(appPath)) {
             return "Blocked: '" + appPath + "' is not allowed for safety reasons";
         }
