@@ -11,6 +11,17 @@ spring:
         options:
           model: deepseek-v4-flash
           temperature: 0.7
+      embedding:
+        base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+        api-key: ${EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:}}
+        model: ${EMBEDDING_MODEL:text-embedding-v4}
+    vectorstore:
+      chroma:
+        initialize-schema: true
+        collection-name: agent_docs
+        client:
+          host: ${CHROMA_HOST:http://localhost}
+          port: ${CHROMA_PORT:8000}
   sql:
     init:
       mode: always
@@ -37,3 +48,19 @@ knife4j:
   enable: true
   setting:
     language: zh_cn
+
+agent:
+  rag:
+    enabled: true
+    docs-path: D:/agent/docs
+    manifest-path: D:/agent/docs/rag-manifest.json
+    chunk-size: 900
+    chunk-overlap: 120
+    top-k: 5
+    min-score: 0.0
+    rebuild-on-startup: false
+    auto-index-on-startup: true
+    batch-size: 20
+    extensions:
+      - .md
+      - .txt

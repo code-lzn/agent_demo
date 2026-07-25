@@ -5,6 +5,8 @@ import com.limou.agent_demo.tool.InputTool;
 import com.limou.agent_demo.tool.NotificationTool;
 import com.limou.agent_demo.tool.ProcessTool;
 import com.limou.agent_demo.tool.WebTool;
+import com.limou.agent_demo.tool.SystemTool;
+import com.limou.agent_demo.tool.WindowTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -28,6 +30,7 @@ public class AiConfig {
     public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory) {
         return builder
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
+                .defaultTools(toolCallbackProvider)
                 .build();
     }
 
@@ -35,8 +38,12 @@ public class AiConfig {
     public ToolCallbackProvider toolCallbackProvider(
             ProcessTool processTool, FileTool fileTool, InputTool inputTool,
             WebTool webTool, NotificationTool notificationTool) {
+            ProcessTool processTool, FileTool fileTool, InputTool inputTool,
+            WindowTool windowTool, ClipboardTool clipboardTool, SystemTool systemTool) {
         return MethodToolCallbackProvider.builder()
                 .toolObjects(processTool, fileTool, inputTool, webTool, notificationTool)
+                .toolObjects(processTool, fileTool, inputTool,
+                        windowTool, clipboardTool, systemTool)
                 .build();
     }
 }
