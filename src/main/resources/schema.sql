@@ -1,3 +1,6 @@
+
+use szml1;
+
 CREATE TABLE IF NOT EXISTS conversation (
     id VARCHAR(36) PRIMARY KEY,
     title VARCHAR(200),
