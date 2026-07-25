@@ -3,6 +3,10 @@ spring:
   # todo 需替换配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/my_db
-    username: root
-    password: 123456
+    url: jdbc:mysql://120.26.212.131:3306/szml1
+    username: szml1
+    password: 5539d601c3e3f931
+
+  ai:
+    openai:
+      api-key: sk-db6a65477cfd4ee1a8830a8d3bba7cad
