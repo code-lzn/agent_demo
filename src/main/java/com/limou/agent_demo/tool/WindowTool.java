@@ -17,9 +17,15 @@ import java.util.List;
 @Component
 public class WindowTool {
 
+    private final ToolContext toolContext;
+
     private static final int SW_MINIMIZE = 6;
     private static final int SW_MAXIMIZE = 3;
     private static final int SW_RESTORE = 9;
+
+    public WindowTool(ToolContext toolContext) {
+        this.toolContext = toolContext;
+    }
 
     // ==================== Query ====================
 
@@ -62,6 +68,7 @@ public class WindowTool {
     @Tool(description = "Find a window by title (partial match, case-insensitive) and bring it to the foreground." +
             " If the window is minimized, it will be restored first")
     public String focusWindow(@ToolParam(description = "Window title (partial match supported)") String title) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         HWND found = findWindowByTitle(title);
         if (found == null) return "No window found with title containing '" + title + "'";
 
@@ -74,6 +81,7 @@ public class WindowTool {
 
     @Tool(description = "Close a window by title (partial match). Sends WM_CLOSE message to the window")
     public String closeWindow(@ToolParam(description = "Window title (partial match supported)") String title) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         HWND found = findWindowByTitle(title);
         if (found == null) return "No window found with title containing '" + title + "'";
         char[] foundTitle = new char[512];
@@ -84,6 +92,7 @@ public class WindowTool {
 
     @Tool(description = "Minimize a window by title")
     public String minimizeWindow(@ToolParam(description = "Window title (partial match supported)") String title) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         HWND found = findWindowByTitle(title);
         if (found == null) return "No window found with title containing '" + title + "'";
         User32.INSTANCE.ShowWindow(found, SW_MINIMIZE);
@@ -92,6 +101,7 @@ public class WindowTool {
 
     @Tool(description = "Maximize a window by title")
     public String maximizeWindow(@ToolParam(description = "Window title (partial match supported)") String title) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         HWND found = findWindowByTitle(title);
         if (found == null) return "No window found with title containing '" + title + "'";
         User32.INSTANCE.ShowWindow(found, SW_MAXIMIZE);
@@ -105,6 +115,7 @@ public class WindowTool {
             @ToolParam(description = "Top-left Y coordinate") int y,
             @ToolParam(description = "Width in pixels") int width,
             @ToolParam(description = "Height in pixels") int height) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         HWND found = findWindowByTitle(title);
         if (found == null) return "No window found with title containing '" + title + "'";
         User32.INSTANCE.SetWindowPos(found, null, x, y, width, height, 0);

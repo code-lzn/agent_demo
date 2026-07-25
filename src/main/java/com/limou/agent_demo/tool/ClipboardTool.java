@@ -17,6 +17,12 @@ import java.io.IOException;
 @Component
 public class ClipboardTool {
 
+    private final ToolContext toolContext;
+
+    public ClipboardTool(ToolContext toolContext) {
+        this.toolContext = toolContext;
+    }
+
     // ==================== Clipboard Read/Write ====================
 
     @Tool(description = "Read text content from the system clipboard")
@@ -37,6 +43,7 @@ public class ClipboardTool {
 
     @Tool(description = "Write text to the system clipboard, so it can be pasted with Ctrl+V into any application")
     public String setClipboard(@ToolParam(description = "Text to write to the clipboard") String text) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         try {
             StringSelection selection = new StringSelection(text);
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, null);
@@ -52,6 +59,7 @@ public class ClipboardTool {
     @Tool(description = "Paste clipboard content at the current cursor position by simulating Ctrl+V." +
             " Use this together with setClipboard for efficient text input — much faster than typing character by character")
     public String paste() {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         try {
             Robot robot = new Robot();
             robot.setAutoDelay(30);
@@ -69,6 +77,7 @@ public class ClipboardTool {
     @Tool(description = "Copy text to clipboard and paste it into the current window in one step." +
             " Equivalent to setClipboard followed by paste. Ideal for large blocks of text")
     public String typeViaClipboard(@ToolParam(description = "Text to paste") String text) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         String setResult = setClipboard(text);
         if (setResult.startsWith("Cannot")) return setResult;
         robotDelay(100);
