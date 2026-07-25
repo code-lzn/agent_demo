@@ -9,4 +9,4 @@ spring:
 
   ai:
     openai:
-      api-key:
+      api-key: sk-db6a65477cfd4ee1a8830a8d3bba7cad
