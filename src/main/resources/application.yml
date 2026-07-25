@@ -5,7 +5,7 @@ spring:
     active: dev
   ai:
     openai:
-      api-key: ${DEEPSEEK_API_KEY}
+      api-key: ${OPENAI_API_KEY}
       base-url: https://api.deepseek.com
       chat:
         options:
@@ -61,6 +61,9 @@ agent:
     rebuild-on-startup: false
     auto-index-on-startup: true
     batch-size: 20
+    # 文件工具安全白名单
+    safety:
+      allowed-paths: ${user.home},${user.dir},C:/,D:/,E:/,F:/,G:/,H:/
     extensions:
       - .md
       - .txt
