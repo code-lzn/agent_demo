@@ -20,9 +20,11 @@ import java.util.stream.Stream;
 public class FileTool {
 
     private final ToolSafety safety;
+    private final ToolContext toolContext;
 
-    public FileTool(ToolSafety safety) {
+    public FileTool(ToolSafety safety, ToolContext toolContext) {
         this.safety = safety;
+        this.toolContext = toolContext;
     }
 
     // ==================== Read ====================
@@ -94,6 +96,7 @@ public class FileTool {
     public String writeFile(
             @ToolParam(description = "Full path to the file") String filePath,
             @ToolParam(description = "Content to write") String content) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             ensureParentDir(filePath);
@@ -109,6 +112,7 @@ public class FileTool {
     public String appendFile(
             @ToolParam(description = "Full path to the file") String filePath,
             @ToolParam(description = "Content to append") String content) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             ensureParentDir(filePath);
@@ -136,6 +140,7 @@ public class FileTool {
     @Tool(description = "Create a directory, including any missing parent directories (like mkdir -p)." +
             " Returns success even if the directory already exists")
     public String createDir(@ToolParam(description = "Full path to the directory to create") String dirPath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
@@ -155,6 +160,7 @@ public class FileTool {
 
     @Tool(description = "Delete a file. Fails if the path is a directory (use deleteDir for directories)")
     public String deleteFile(@ToolParam(description = "Full path to the file to delete") String filePath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             Path path = Path.of(filePath);
@@ -169,6 +175,7 @@ public class FileTool {
 
     @Tool(description = "Delete a directory and all its contents recursively. Use with caution")
     public String deleteDir(@ToolParam(description = "Full path to the directory to delete") String dirPath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
@@ -193,6 +200,7 @@ public class FileTool {
     public String copyFile(
             @ToolParam(description = "Source file path") String sourcePath,
             @ToolParam(description = "Destination file or directory path") String targetPath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(sourcePath)) return "Access denied: " + sourcePath;
         if (!safety.isPathAllowed(targetPath)) return "Access denied: " + targetPath;
         try {
@@ -215,6 +223,7 @@ public class FileTool {
     public String moveFile(
             @ToolParam(description = "Source file or directory path") String sourcePath,
             @ToolParam(description = "Destination path (new name or new location)") String targetPath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(sourcePath)) return "Access denied: " + sourcePath;
         if (!safety.isPathAllowed(targetPath)) return "Access denied: " + targetPath;
         try {
@@ -269,6 +278,7 @@ public class FileTool {
             " For example: .txt opens in Notepad, .pdf opens in PDF reader, .jpg opens in image viewer." +
             " Executable files (.exe, .bat, etc.) are blocked for safety — use ProcessTool.openApp instead")
     public String openFile(@ToolParam(description = "Full path to the file") String filePath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(filePath)) return "Access denied: " + filePath;
         try {
             Path path = Path.of(filePath);
@@ -291,6 +301,7 @@ public class FileTool {
     @Tool(description = "Open a directory in Windows Explorer. If a file path is given," +
             " opens the parent directory and selects the file")
     public String openDir(@ToolParam(description = "Directory path (or file path to reveal in Explorer)") String dirPath) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isPathAllowed(dirPath)) return "Access denied: " + dirPath;
         try {
             Path path = Path.of(dirPath);
