@@ -3,6 +3,7 @@ package com.limou.agent_demo.tool;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
@@ -72,5 +73,44 @@ public class ToolSafety {
             cmd = cmd.substring(0, cmd.length() - 4);
         }
         return allowedCommands.contains(cmd);
+    }
+
+    // ==================== URL 安全（WebTool 使用） ====================
+
+    private static final Set<String> BLOCKED_NETWORKS = Set.of(
+
+            "localhost", "127.0.0.1", "0.0.0.0", "[::1]", "169.254", "10.", "172.16.",
+            "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+            "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.",
+            "172.31.", "192.168."
+    );
+
+    private static final long MAX_RESPONSE_BYTES = 1024 * 1024; // 1MB
+
+    /**
+     * 检查 URL 是否安全（防止 SSRF）。
+     * 只允许 http/https，拦截内网地址和本地地址。
+     */
+    public boolean isUrlAllowed(String url) {
+        try {
+            URI uri = URI.create(url);
+            String scheme = uri.getScheme();
+            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                return false;
+            }
+            String host = uri.getHost();
+            if (host == null) return false;
+            String lowerHost = host.toLowerCase();
+            for (String blocked : BLOCKED_NETWORKS) {
+                if (lowerHost.contains(blocked)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public long getMaxResponseBytes() {
+        return MAX_RESPONSE_BYTES;
     }
 }
