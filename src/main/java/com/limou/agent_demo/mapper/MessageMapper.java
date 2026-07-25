@@ -21,4 +21,10 @@ public interface MessageMapper {
 
     @Delete("DELETE FROM message WHERE conversation_id = #{conversationId}")
     int deleteByConversationId(String conversationId);
+
+    @Select("SELECT COUNT(*) FROM message WHERE conversation_id = #{conversationId}")
+    int countByConversationId(String conversationId);
+
+    @Select("SELECT content FROM message WHERE conversation_id = #{conversationId} AND role = 'user' ORDER BY created_at ASC LIMIT 1")
+    String findFirstUserMessageContent(String conversationId);
 }

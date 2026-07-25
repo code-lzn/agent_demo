@@ -16,11 +16,13 @@ import java.time.format.DateTimeFormatter;
 public class SystemTool {
 
     private final ToolSafety safety;
+    private final ToolContext toolContext;
 
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public SystemTool(ToolSafety safety) {
+    public SystemTool(ToolSafety safety, ToolContext toolContext) {
         this.safety = safety;
+        this.toolContext = toolContext;
     }
 
     // ==================== Command Execution ====================
@@ -31,6 +33,7 @@ public class SystemTool {
             " ping, ipconfig, netstat, tasklist, curl, date, time, cd, set, where, ver," +
             " systeminfo, wmic, nslookup, tracert, path, help, clip, sort, more")
     public String runCommand(@ToolParam(description = "Command with arguments, e.g. dir C:\\, ping baidu.com") String command) {
+        if (!toolContext.isConfirmed()) return "Confirmation required: set confirm=true to perform this operation";
         if (!safety.isCommandAllowed(command)) {
             return "Command rejected: not in whitelist. To use '" + command + "', add it to agent.safety.allowed-commands config";
         }
