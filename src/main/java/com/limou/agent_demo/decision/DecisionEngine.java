@@ -12,25 +12,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.List;
+import java.time.Duration;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 决策引擎 —— 整个决策层的总协调器，是 AI Agent 的"大脑"。
  * <p>
- * 决策引擎将 Plan → Execute → Reflect 三个阶段串联成一个完整的智能循环。
- * <p>
- * 内置安全防护：
- * <ul>
- *   <li>① Prompt 注入检测 — 关键词黑名单</li>
- *   <li>④ 工具调用频率控制 — 同工具≤3次，总计≤10次</li>
- *   <li>⑤ 输出内容过滤 — 手机号/API Key/密码</li>
- *   <li>最大轮次 — 默认 5 轮</li>
- *   <li>单轮超时 — 每轮最长 180 秒</li>
- * </ul>
+ * 纯响应式实现：Plan → Execute(流式) → Reflect，全程无阻塞。
+ * 使用 Flux.concat 和递归组合实现 Plan→Execute→Reflect 循环，
+ * 保证 Execute 阶段的内容逐字流式推送。
  */
 @Component
 public class DecisionEngine {
@@ -38,7 +28,7 @@ public class DecisionEngine {
     private static final Logger log = LoggerFactory.getLogger(DecisionEngine.class);
 
     private static final int DEFAULT_MAX_ROUNDS = 5;
-    private static final int ROUND_TIMEOUT_SECONDS = 180;
+    private static final Duration ROUND_TIMEOUT = Duration.ofSeconds(180);
 
     private final TaskPlanner planner;
     private final ReActExecutor reActExecutor;
@@ -57,168 +47,120 @@ public class DecisionEngine {
 
     /**
      * 对用户消息进行完整的决策-执行流程，返回流式事件。
-     *
-     * @param userMessage    用户输入
-     * @param conversationId 会话 ID
-     * @param confirm        是否已确认敏感操作（来自 ChatRequest.confirm）
-     * @return 流式的 ChatEvent 序列
+     * 全程响应式，无阻塞等待。
      */
     public Flux<ChatEvent> decide(String userMessage, String conversationId, boolean confirm) {
-        log.info("[DecisionEngine] 开始决策流程, conversationId={}, message={}",
-                conversationId, truncate(userMessage, 80));
+        log.info("[DecisionEngine] 开始决策流程, conversationId={}", conversationId);
 
-        return Flux.create(sink -> {
-            try {
-                // ============ 安全 ①：Prompt 注入检测 ============
-                SecurityVerdict injectionCheck = securityGuard.checkPromptInjection(userMessage);
-                if (injectionCheck.isBlocked()) {
-                    log.warn("[DecisionEngine] Prompt 注入拦截: {}", injectionCheck.getReason());
-                    sink.next(ChatEvent.error("安全拦截: " + injectionCheck.getReason()));
-                    sink.complete();
-                    return;
-                }
+        // 安全①：Prompt 注入检测
+        SecurityVerdict injectionCheck = securityGuard.checkPromptInjection(userMessage);
+        if (injectionCheck.isBlocked()) {
+            log.warn("[DecisionEngine] Prompt 注入拦截: {}", injectionCheck.getReason());
+            return Flux.just(ChatEvent.error("安全拦截: " + injectionCheck.getReason()));
+        }
 
-                // ============ 会话状态追踪 ============
-                AgentSession session = new AgentSession(conversationId);
-                StringBuilder fullResponse = new StringBuilder();
+        AgentSession session = new AgentSession(conversationId);
 
-                // ============ Phase 1: Planning ============
-                sink.next(ChatEvent.thinking());
-                log.debug("[DecisionEngine] Phase 1: Planning");
+        // 1. Plan（同步，但立即 emit）
+        ExecutionPlan plan = planner.plan(userMessage);
+        log.info("[DecisionEngine] 计划生成: goal={}, steps={}",
+                truncate(plan.getGoal(), 60), plan.getTotalSteps());
 
-                ExecutionPlan plan = planner.plan(userMessage);
-                log.info("[DecisionEngine] 计划生成完成: goal={}, steps={}",
-                        truncate(plan.getGoal(), 60), plan.getTotalSteps());
-
-                sink.next(ChatEvent.message(formatPlanMessage(plan)));
-
-                // ============ Phase 2-3: Execute + Reflect Loop ============
-                executeLoop(plan, userMessage, conversationId, confirm, session, fullResponse, sink);
-
-            } catch (Exception e) {
-                log.error("[DecisionEngine] 决策流程异常", e);
-                sink.next(ChatEvent.error("决策引擎异常: " + e.getMessage()));
-                sink.complete();
-            }
-        });
+        // 2. Execute + Reflect 循环
+        return Flux.concat(
+                Flux.just(ChatEvent.thinking(), ChatEvent.message(formatPlanMessage(plan))),
+                executeLoop(plan, userMessage, conversationId, confirm, session, 0)
+        );
     }
 
-    // ==================== 循环执行 ====================
+    /**
+     * 递归响应式执行循环：Execute(流式) → Reflect → 继续/结束。
+     * 每轮内部使用 Flux.concat(executeEvents, reflectThenNext)，
+     * 保证 execute 阶段是真正流式的。
+     */
+    private Flux<ChatEvent> executeLoop(ExecutionPlan plan,
+                                         String userMessage,
+                                         String conversationId,
+                                         boolean confirm,
+                                         AgentSession session,
+                                         int round) {
+        if (round >= plan.getMaxRounds()) {
+            return Flux.just(ChatEvent.message(
+                    "\n\n---\n⚠️ 已达到最大执行轮次（" + plan.getMaxRounds() + "）\n"));
+        }
 
-    private void executeLoop(ExecutionPlan plan,
-                             String userMessage,
-                             String conversationId,
-                             boolean confirm,
-                             AgentSession session,
-                             StringBuilder fullResponse,
-                             reactor.core.publisher.FluxSink<ChatEvent> sink) {
-        int round = 0;
-        boolean done = false;
+        session.incrementRound();
+        int currentRound = round + 1;
+        log.info("[DecisionEngine] 第 {}/{} 轮", currentRound, plan.getMaxRounds());
 
-        while (!done && round < plan.getMaxRounds() && !sink.isCancelled()) {
-            round++;
-            session.incrementRound();
-            log.info("[DecisionEngine] 开始第 {}/{} 轮执行", round, plan.getMaxRounds());
+        String prompt = (currentRound == 1)
+                ? buildFirstRoundPrompt(userMessage, plan)
+                : buildContinuePrompt(plan, currentRound);
 
-            final int currentRound = round;
+        StringBuilder roundResponse = new StringBuilder();
 
-            CountDownLatch latch = new CountDownLatch(1);
-            StringBuilder roundResponse = new StringBuilder();
-            AtomicBoolean roundSuccess = new AtomicBoolean(true);
+        // ── Execute（真正流式）──
+        Flux<ChatEvent> executeEvents = reActExecutor.executeRound(
+                        prompt, conversationId, currentRound, currentRound == 1)
+                .timeout(ROUND_TIMEOUT)
+                .doOnNext(event -> {
+                    if ("message".equals(event.getType()) && event.getData() != null) {
+                        roundResponse.append(event.getData().toString());
+                    }
+                })
+                .onErrorResume(error -> {
+                    log.warn("[DecisionEngine] 第 {} 轮异常: {}", currentRound, error.getMessage());
+                    return Flux.just(ChatEvent.error("第 " + currentRound + " 轮出错: " + error.getMessage()));
+                });
 
-            String prompt = (currentRound == 1)
-                    ? buildFirstRoundPrompt(userMessage, plan)
-                    : buildContinuePrompt(plan, currentRound);
+        // ── 执行完成后 → 反思 + 继续/结束 ──
+        Flux<ChatEvent> reflectThenNext = Flux.defer(() -> {
+            String responseText = roundResponse.toString();
 
-            // 安全 ④：频率控制 —— 委托给 ReActExecutor 在执行工具调用时检查
-            //（通过 AgentSession 跟踪工具调用）
-
-            var subscription = reActExecutor.executeRound(prompt, conversationId, currentRound, currentRound == 1)
-                    .doOnNext(event -> {
-                        if ("message".equals(event.getType()) && event.getData() != null) {
-                            String text = event.getData().toString();
-                            roundResponse.append(text);
-                        }
-                        sink.next(event);
-                    })
-                    .doOnError(error -> {
-                        log.error("[DecisionEngine] 第 {} 轮出错: {}", currentRound, error.getMessage());
-                        roundSuccess.set(false);
-                        sink.next(ChatEvent.error("第 " + currentRound + " 轮出错: " + error.getMessage()));
-                        latch.countDown();
-                    })
-                    .doOnComplete(() -> latch.countDown())
-                    .subscribe();
-
-            try {
-                boolean completed = latch.await(ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                if (!completed) {
-                    log.warn("[DecisionEngine] 第 {} 轮超时", currentRound);
-                    subscription.dispose();
-                    sink.next(ChatEvent.error("第 " + currentRound + " 轮执行超时（" + ROUND_TIMEOUT_SECONDS + "秒）"));
-                    break;
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                subscription.dispose();
-                log.warn("[DecisionEngine] 第 {} 轮被中断", currentRound);
-                break;
+            if (responseText.isBlank()) {
+                // 空响应 → 重试
+                log.warn("[DecisionEngine] 第 {} 轮无输出", currentRound);
+                return Flux.just(ChatEvent.thinking(),
+                        ChatEvent.message("\n🔄 执行未产生输出，调整计划重试...\n"));
             }
 
-            String roundText = roundResponse.toString();
-            fullResponse.append(roundText);
+            // 反思
+            ReflectionResult reflection = reflector.reflect(userMessage, responseText);
+            String filteredSummary = securityGuard.filterOutput(reflection.toDecisionSummary());
+            log.info("[DecisionEngine] 反思: {}", reflection.toDecisionSummary());
 
-            if (!roundSuccess.get()) {
-                sink.next(ChatEvent.thinking());
-                plan = planner.replan(plan, "第 " + currentRound + " 轮执行失败: " + roundText);
-                sink.next(ChatEvent.message("\n🔄 执行遇到问题，已调整计划重试...\n"));
-                continue;
-            }
-
-            // ============ Phase 3: Reflection ============
-            log.debug("[DecisionEngine] Phase 3: Reflection (round {})", currentRound);
-
-            ReflectionResult reflection = reflector.reflect(userMessage, roundText);
-
-            log.info("[DecisionEngine] 反思结果: {}", reflection.toDecisionSummary());
-
-            // 安全 ⑤：输出内容过滤 —— 过滤反思结果中的敏感信息
-            String reflectionSummary = reflection.toDecisionSummary();
-            String filteredSummary = securityGuard.filterOutput(reflectionSummary);
-            sink.next(ChatEvent.message("\n\n📋 **反思**: " + filteredSummary + "\n"));
+            // 判定后续动作
+            Flux<ChatEvent> result = Flux.just(
+                    ChatEvent.message("\n\n📋 **反思**: " + filteredSummary + "\n"));
 
             if (reflection.shouldStop()) {
-                done = true;
+                // 完成或需追问
                 if (Boolean.TRUE.equals(reflection.getNeedsUserClarification())
                         && reflection.getClarificationQuestion() != null) {
-                    String filteredQuestion = securityGuard.filterOutput(reflection.getClarificationQuestion());
-                    sink.next(ChatEvent.message("\n❓ " + filteredQuestion + "\n"));
+                    String q = securityGuard.filterOutput(reflection.getClarificationQuestion());
+                    result = Flux.concat(result, Flux.just(ChatEvent.message("\n❓ " + q + "\n")));
                 }
+                return Flux.concat(result,
+                        Flux.just(ChatEvent.done(conversationId, UUID.randomUUID().toString())));
+
             } else if (Boolean.TRUE.equals(reflection.getNeedsReplan())) {
-                sink.next(ChatEvent.thinking());
+                // 重新规划
                 String failReason = reflection.getFailureReason() != null
-                        ? reflection.getFailureReason()
-                        : "反思判定需要重新规划";
-                plan = planner.replan(plan, failReason);
-                sink.next(ChatEvent.message("\n🔄 **调整计划**\n" + formatPlanMessage(plan)));
+                        ? reflection.getFailureReason() : "反思判定需要重新规划";
+                ExecutionPlan newPlan = planner.replan(plan, failReason);
+                return Flux.concat(result,
+                        Flux.just(ChatEvent.message("\n🔄 **调整计划**\n" + formatPlanMessage(newPlan))),
+                        executeLoop(newPlan, userMessage, conversationId, confirm, session, currentRound));
+
             } else {
-                sink.next(ChatEvent.thinking());
+                // 继续下一轮
+                return Flux.concat(result,
+                        Flux.just(ChatEvent.thinking()),
+                        executeLoop(plan, userMessage, conversationId, confirm, session, currentRound));
             }
-        }
+        });
 
-        // ============ 循环结束 ============
-        if (!done && !sink.isCancelled()) {
-            sink.next(ChatEvent.message(
-                    "\n\n---\n⚠️ 已达到最大执行轮次（" + plan.getMaxRounds()
-                            + "），任务可能未完全完成。你可以继续指示我完成剩余工作。\n"));
-        }
-
-        // 安全 ⑤：对最终完整回答做输出过滤
-        String finalOutput = securityGuard.filterOutput(fullResponse.toString());
-
-        log.info("[DecisionEngine] 决策流程结束, 总轮次={}, 完成={}", round, done);
-        sink.next(ChatEvent.done(conversationId, UUID.randomUUID().toString()));
-        sink.complete();
+        return Flux.concat(executeEvents, reflectThenNext);
     }
 
     // ==================== 辅助方法 ====================
@@ -227,11 +169,9 @@ public class DecisionEngine {
         StringBuilder sb = new StringBuilder();
         sb.append("\n## 📋 执行计划\n\n");
         sb.append("**目标**: ").append(plan.getGoal()).append("\n\n");
-
         if (plan.getReasoning() != null && !plan.getReasoning().isBlank()) {
             sb.append("**推理**: ").append(plan.getReasoning()).append("\n\n");
         }
-
         if (plan.getSteps().isEmpty()) {
             sb.append("（这是一个简单对话，无需分步执行）\n");
         } else {
@@ -251,15 +191,12 @@ public class DecisionEngine {
                 sb.append("\n");
             }
         }
-
         sb.append("\n---\n\n⚡ **开始执行**...\n");
         return sb.toString();
     }
 
     private String buildFirstRoundPrompt(String userMessage, ExecutionPlan plan) {
-        if (plan.getSteps().isEmpty()) {
-            return userMessage;
-        }
+        if (plan.getSteps().isEmpty()) return userMessage;
         StringBuilder sb = new StringBuilder();
         sb.append("【执行计划 - 请逐步执行并在每步开始时用 📌 标注】\n");
         for (PlanStep step : plan.getSteps()) {
