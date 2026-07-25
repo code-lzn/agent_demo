@@ -31,9 +31,22 @@ public class AiConfig {
     @Bean
     public ToolCallbackProvider toolCallbackProvider(
             ProcessTool processTool, FileTool fileTool, InputTool inputTool,
-            WebTool webTool, NotificationTool notificationTool, WindowTool windowTool, ClipboardTool clipboardTool, SystemTool systemTool) {
+            WindowTool windowTool, ClipboardTool clipboardTool, SystemTool systemTool,
+            WebTool webTool, NotificationTool notificationTool,
+            MouseTool mouseTool, AudioTool audioTool,
+            DatabaseTool databaseTool, CronTool cronTool,
+            LogMonitorTool logMonitorTool, ImageTool imageTool,
+            ArchiveTool archiveTool, DownloadTool downloadTool,
+            RegistryTool registryTool, PowerTool powerTool) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(processTool, fileTool, inputTool, webTool, notificationTool, windowTool, clipboardTool, systemTool)
+                .toolObjects(processTool, fileTool, inputTool,
+                        windowTool, clipboardTool, systemTool,
+                        webTool, notificationTool,
+                        mouseTool, audioTool,
+                        databaseTool, cronTool,
+                        logMonitorTool, imageTool,
+                        archiveTool, downloadTool,
+                        registryTool, powerTool)
                 .build();
     }
 }
