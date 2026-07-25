@@ -63,8 +63,10 @@ public class AgentService {
         String userMsgId = UUID.randomUUID().toString();
         persistUserMessage(request.getMessage(), userMsgId, conversationId);
 
-        // 2. RAG 知识库检索 → 增强用户消息
-        String enrichedMessage = buildRagPrompt(request.getMessage());
+        // 2. RAG 知识库检索（仅复杂问题时启用，闲聊跳过）
+        String enrichedMessage = isSimpleChat(request.getMessage())
+                ? request.getMessage()
+                : buildRagPrompt(request.getMessage());
 
         // 3. 委托决策引擎（Plan → ReAct → Reflect）
         StringBuilder fullResponse = new StringBuilder();
@@ -80,6 +82,32 @@ public class AgentService {
     }
 
     // ==================== RAG ====================
+
+    /**
+     * 快速判断消息是否不需要 RAG 增强（闲聊/问候/确认等）。
+     */
+    private boolean isSimpleChat(String message) {
+        if (message == null || message.isBlank()) return true;
+        if (message.trim().length() <= 12) return true;
+
+        String[] actionKeywords = {
+                "打开", "启动", "运行", "关闭", "杀掉",
+                "写", "写入", "创建", "新建", "生成",
+                "查", "搜索", "找", "读取", "读", "列出",
+                "复制", "移动", "删除", "重命名", "下载",
+                "截图", "截屏", "录屏", "录音",
+                "发送", "邮件", "通知",
+                "执行", "编译", "安装",
+                "注册表", "进程", "窗口", "鼠标", "键盘",
+                "文件", "文件夹", "目录",
+        };
+
+        String lower = message.toLowerCase();
+        for (String kw : actionKeywords) {
+            if (lower.contains(kw)) return false;
+        }
+        return true;
+    }
 
     /**
      * 用本地知识库增强用户问题。

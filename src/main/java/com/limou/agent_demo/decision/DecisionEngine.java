@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -100,6 +101,14 @@ public class DecisionEngine {
 
         return Flux.create(sink -> {
             try {
+                // ============ 快速分类：简单闲聊跳过 Planner，直接流式输出 ============
+                if (isSimpleChat(userMessage)) {
+                    log.info("[DecisionEngine] 检测到简单对话，跳过 Planner");
+                    sink.next(ChatEvent.thinking());
+                    executeSimple(null, userMessage, conversationId, sink);
+                    return;
+                }
+
                 // ============ Phase 1: Planning ============
                 sink.next(ChatEvent.thinking());
                 log.debug("[DecisionEngine] Phase 1: Planning");
@@ -111,8 +120,14 @@ public class DecisionEngine {
                 // 将计划以格式化消息推送给客户端
                 sink.next(ChatEvent.message(formatPlanMessage(plan)));
 
-                // ============ Phase 2-3: Execute + Reflect Loop ============
-                executeLoop(plan, userMessage, conversationId, sink);
+                // ============ Phase 2: Execute (no loop for simple chat) ============
+                if (plan.getSteps().isEmpty()) {
+                    // 快速路径：简单对话/闲聊，一轮执行直接返回，跳过 Plan→Reflect 循环
+                    executeSimple(plan, userMessage, conversationId, sink);
+                } else {
+                    // 正常路径：有步骤的计划，执行 Execute + Reflect 循环
+                    executeLoop(plan, userMessage, conversationId, sink);
+                }
 
             } catch (Exception e) {
                 log.error("[DecisionEngine] 决策流程异常", e);
@@ -238,6 +253,67 @@ public class DecisionEngine {
         log.info("[DecisionEngine] 决策流程结束, 总轮次={}, 完成={}", round, done);
         sink.next(ChatEvent.done(conversationId, UUID.randomUUID().toString()));
         sink.complete();
+    }
+
+    /**
+     * 简单执行 —— 用于无需分步的对话（闲聊、问答）。
+     * <p>
+     * 纯响应式：直接订阅 ReAct 流，将事件转发到外层 sink，
+     * 流自然结束时发送 done 并完成外层 Flux。
+     * 无阻塞、无 CountDownLatch，保证端到端流式输出。
+     */
+    private void executeSimple(ExecutionPlan plan,
+                               String userMessage,
+                               String conversationId,
+                               reactor.core.publisher.FluxSink<ChatEvent> sink) {
+        log.info("[DecisionEngine] 快速路径: 简单对话，纯流式执行");
+
+        reActExecutor.executeRound(userMessage, conversationId, 1, true)
+                .timeout(Duration.ofSeconds(ROUND_TIMEOUT_SECONDS))
+                .doOnNext(sink::next)
+                .doOnError(error -> {
+                    log.error("[DecisionEngine] 快速路径出错: {}", error.getMessage());
+                    sink.next(ChatEvent.error("执行出错: " + error.getMessage()));
+                })
+                .doFinally(signal -> {
+                    log.info("[DecisionEngine] 快速路径完成, signal={}", signal);
+                    sink.next(ChatEvent.done(conversationId, UUID.randomUUID().toString()));
+                    sink.complete();
+                })
+                .subscribe();
+    }
+
+    /**
+     * 快速判断是否为简单闲聊/问候，无需规划。
+     * <p>
+     * 条件：消息较短 且 不包含任何"需要工具"的动作关键词。
+     * 命中后直接跳过 Planner，零等待进入流式输出。
+     */
+    private boolean isSimpleChat(String message) {
+        if (message == null || message.isBlank()) return true;
+
+        // 太短的消息（≤12 字）：问候、确认、感叹等，没必要规划
+        if (message.trim().length() <= 12) return true;
+
+        // 动作关键词 —— 出现任意一个说明需要工具，必须走规划
+        String[] actionKeywords = {
+                "打开", "启动", "运行", "关闭", "杀掉",
+                "写", "写入", "创建", "新建", "生成",
+                "查", "搜索", "找", "读取", "读", "列出",
+                "复制", "移动", "删除", "重命名", "下载",
+                "截图", "截屏", "录屏", "录音",
+                "发送", "邮件", "通知",
+                "执行", "运行", "编译", "安装",
+                "注册表", "进程", "窗口", "鼠标", "键盘",
+                "文件", "文件夹", "目录",
+        };
+
+        String lower = message.toLowerCase();
+        for (String kw : actionKeywords) {
+            if (lower.contains(kw)) return false;
+        }
+
+        return true;
     }
 
     // ==================== 辅助方法 ====================
