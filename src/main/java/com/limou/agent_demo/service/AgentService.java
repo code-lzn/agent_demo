@@ -1,5 +1,6 @@
 package com.limou.agent_demo.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.limou.agent_demo.decision.DecisionEngine;
 import com.limou.agent_demo.dto.ChatEvent;
 import com.limou.agent_demo.dto.ChatRequest;
@@ -7,12 +8,19 @@ import com.limou.agent_demo.entity.Conversation;
 import com.limou.agent_demo.entity.Message;
 import com.limou.agent_demo.mapper.ConversationMapper;
 import com.limou.agent_demo.mapper.MessageMapper;
+import com.limou.agent_demo.tool.ToolCallCapture;
+import com.limou.agent_demo.tool.ToolContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -36,19 +44,30 @@ public class AgentService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     private final DecisionEngine decisionEngine;
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
     private final LocalRagService localRagService;
+    private final ToolContext toolContext;
+    private final ToolCallCapture toolCallCapture;
+    private final ChatMemory chatMemory;
 
     public AgentService(DecisionEngine decisionEngine,
                         ConversationMapper conversationMapper,
                         MessageMapper messageMapper,
-                        LocalRagService localRagService) {
+                        LocalRagService localRagService,
+                        ToolContext toolContext,
+                        ToolCallCapture toolCallCapture,
+                        ChatMemory chatMemory) {
         this.decisionEngine = decisionEngine;
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.localRagService = localRagService;
+        this.toolContext = toolContext;
+        this.toolCallCapture = toolCallCapture;
+        this.chatMemory = chatMemory;
     }
 
     /**
@@ -60,6 +79,7 @@ public class AgentService {
 
         // 1. 会话管理
         String conversationId = getOrCreateConversationId(request);
+        primeChatMemory(conversationId);
         String userMsgId = UUID.randomUUID().toString();
         persistUserMessage(request.getMessage(), userMsgId, conversationId);
 
@@ -69,16 +89,29 @@ public class AgentService {
                 : buildRagPrompt(request.getMessage());
 
         // 3. 委托决策引擎（Plan → ReAct → Reflect）
+        // Flux.defer 确保 ThreadLocal 上下文在订阅线程上设置
         StringBuilder fullResponse = new StringBuilder();
+        boolean confirm = request.isConfirm();
 
-        return decisionEngine.decide(enrichedMessage, conversationId)
-                .doOnNext(event -> {
-                    if ("message".equals(event.getType()) && event.getData() != null) {
-                        fullResponse.append(event.getData().toString());
-                    }
-                })
-                .doOnComplete(() -> persistAssistantMessage(fullResponse.toString(), conversationId))
-                .doOnError(error -> log.error("[AgentService] 决策引擎出错", error));
+        return Flux.defer(() -> {
+            toolContext.begin(conversationId, confirm);
+
+            return decisionEngine.decide(enrichedMessage, conversationId, confirm)
+                    .doOnNext(event -> {
+                        if ("message".equals(event.getType()) && event.getData() != null) {
+                            fullResponse.append(event.getData().toString());
+                        }
+                    })
+                    .doOnComplete(() -> {
+                        List<Map<String, Object>> toolCalls = toolCallCapture.drain();
+                        persistAssistantMessage(fullResponse.toString(), conversationId, toolCalls);
+                    })
+                    .doOnError(error -> log.error("[AgentService] 决策引擎出错", error))
+                    .doFinally(signal -> {
+                        toolContext.clear();
+                        toolCallCapture.clear();
+                    });
+        });
     }
 
     // ==================== RAG ====================
@@ -132,6 +165,35 @@ public class AgentService {
 
     // ==================== 持久化 ====================
 
+    /**
+     * 将数据库中的历史消息载入 ChatMemory，确保 JVM 重启后对话上下文不丢失。
+     * 仅在 ChatMemory 中尚无此会话记录时执行（避免重复加载）。
+     */
+    private void primeChatMemory(String conversationId) {
+        List<org.springframework.ai.chat.messages.Message> existing = chatMemory.get(conversationId);
+        if (existing != null && !existing.isEmpty()) return;
+
+        List<Message> dbMessages = messageMapper.selectRecentByConversationId(conversationId, 20);
+        if (dbMessages.isEmpty()) return;
+
+        List<org.springframework.ai.chat.messages.Message> aiMessages = new ArrayList<>();
+        // DB 返回 DESC (最新在前)，反转为按时间顺序添加
+        for (int i = dbMessages.size() - 1; i >= 0; i--) {
+            Message m = dbMessages.get(i);
+            if ("user".equals(m.getRole())) {
+                aiMessages.add(new UserMessage(m.getContent()));
+            } else if ("assistant".equals(m.getRole())) {
+                aiMessages.add(new AssistantMessage(m.getContent()));
+            }
+        }
+
+        if (!aiMessages.isEmpty()) {
+            chatMemory.add(conversationId, aiMessages);
+            log.info("[AgentService] 已加载 {} 条历史消息到 ChatMemory, conversationId={}",
+                    aiMessages.size(), conversationId);
+        }
+    }
+
     private String getOrCreateConversationId(ChatRequest request) {
         if (request.getConversationId() != null && !request.getConversationId().isEmpty()) {
             Conversation existing = conversationMapper.selectById(request.getConversationId());
@@ -155,12 +217,20 @@ public class AgentService {
         messageMapper.insert(msg);
     }
 
-    private void persistAssistantMessage(String content, String conversationId) {
+    private void persistAssistantMessage(String content, String conversationId,
+                                          List<Map<String, Object>> toolCalls) {
         Message msg = new Message();
         msg.setId(UUID.randomUUID().toString());
         msg.setConversationId(conversationId);
         msg.setRole("assistant");
         msg.setContent(content);
+        if (toolCalls != null && !toolCalls.isEmpty()) {
+            try {
+                msg.setToolCalls(objectMapper.writeValueAsString(toolCalls));
+            } catch (Exception e) {
+                log.warn("[AgentService] 序列化 toolCalls 失败", e);
+            }
+        }
         messageMapper.insert(msg);
     }
 

@@ -696,3 +696,136 @@ docs/rag-manifest.json
 docs/vector-store.json
 src/main/resources/application-dev.yml
 ```
+
+---
+
+## 2026-07-25 下午：工具类模块扩展
+
+### 一、新增工具（5个 + 补注册1个）
+
+#### 1. WebTool — HTTP 请求
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `httpGet` | `url, headers` | GET 请求，headers 传 JSON 如 `{"Authorization":"Bearer xxx"}` |
+| `httpPost` | `url, body, contentType, headers` | POST 请求 |
+| `httpPut` | `url, body, headers` | PUT 请求 |
+| `httpDelete` | `url, headers` | DELETE 请求 |
+
+- 零外部依赖，JDK `java.net.http.HttpClient`
+- URL 安全由 `ToolSafety.isUrlAllowed()` 保障，拦截 `file://`、localhost、内网 IP
+- 响应体 1MB 截断，15s 超时，自动跟随重定向
+- 手写 JSON 解析 headers（不引入 Jackson/Gson）
+
+#### 2. NotificationTool — 系统通知
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `notify` | `title, message` | 弹出 Windows 托盘通知气泡 |
+
+- 基于 JDK `SystemTray` + `TrayIcon`
+- 构造时用内存 BufferedImage 作为透明占位图标
+- 不可用时返回错误信息而非崩溃，已通过 `TraySanityTest` 独立验证
+
+#### 3. GrepTool — 递归正则搜索
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `searchCode` | `pattern, rootPath?, fileGlob?` | 递归搜索，返回 `文件:行号:内容` |
+
+- `rootPath` 默认项目根目录，受 ToolSafety 路径约束
+- `fileGlob` 如 `*.java`、`*.{yml,xml}` 过滤文件类型
+- 自动跳过二进制文件（检测 null 字节）
+- 输出截断：50 条匹配 / 4000 字符
+
+#### 4. EditTool — 精准文件编辑
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `editFile` | `filePath, oldString, newString, replaceAll?` | 精确字符串替换 |
+
+- `replaceAll=false` 时，多处匹配会报错并提示更精确指定
+- 每次修改自动生成 `.bak` 备份文件
+- oldString 必须完全匹配（包括缩进、换行）
+
+#### 5. GitTool — 版本控制（只读）
+
+| 方法 | 参数 | 说明 |
+|------|------|------|
+| `gitStatus` | — | `git status --porcelain` |
+| `gitDiff` | `staged` | 工作区 / 暂存区差异 |
+| `gitLog` | `n` | 最近 N 条提交记录 |
+| `gitShowChangedFiles` | `n` | 最近 N 次提交变动的文件列表 |
+| `gitBranch` | ��� | 当前分支名 |
+
+- 所有操作只读，不执行 commit/push/pull
+- 输出截断 4000 字符，30s 超时
+
+#### 6. EmailTool — 补注册
+
+文件已存在但未在 `AiConfig` 的 `ToolCallbackProvider` 中注册，本次补上。
+
+---
+
+### 二、ToolSafety 增强
+
+| 新增方法 | 说明 |
+|----------|------|
+| `isUrlAllowed(url)` | 拦截 `file://`、localhost、`127.0.0.1`、`192.168.x.x`、`10.x.x.x`、`172.16-31.x.x` |
+| `isCommandAllowed(cmd)` | 命令白名单校验，提取命令名匹配，兼容路径前缀和 `.exe`/`.bat` 后缀 |
+| `getMaxResponseBytes()` | 返回响应体大小限制 1MB |
+
+- 私有常量 `BLOCKED_NETWORKS` 定义内网地址段
+- 私有常量 `MAX_RESPONSE_BYTES = 1024 * 1024`
+- `DEFAULT_ALLOWED_COMMANDS` 内置 25 个安全命令（dir/echo/ping 等），可通过 `agent.safety.allowed-commands` 配置扩展
+
+---
+
+### 三、AgentDemoApplication 修改
+
+```java
+public static void main(String[] args) {
+    System.setProperty("java.awt.headless", "false");  // 必须，否则 SystemTray 不可用
+    SpringApplication.run(AgentDemoApplication.class, args);
+}
+```
+
+---
+
+### 四、AiConfig 注册
+
+```java
+@Bean
+public ToolCallbackProvider toolCallbackProvider(
+        ProcessTool, FileTool, InputTool,
+        WindowTool, ClipboardTool, SystemTool,
+        WebTool, NotificationTool,
+        MouseTool, AudioTool,
+        DatabaseTool, CronTool,
+        LogMonitorTool, ImageTool,
+        ArchiveTool, DownloadTool,
+        RegistryTool, PowerTool,
+        EmailTool,
+        GrepTool, EditTool, GitTool) {
+    return MethodToolCallbackProvider.builder()
+            .toolObjects(/* 以上全部 22 个工具类 */)
+            .build();
+}
+```
+
+---
+
+### 五、关键踩坑
+
+1. **DeepSeek 不支持 Function Calling**：通过 `.chatResponse()` 抓包确认 `toolCalls=[]`，模型只在文本中"描述"调用工具，实际未触发 Spring AI 的工具执行链路。`deepseek-chat` 和 `deepseek-v4-flash` 均如此。
+2. **Spring Boot 默认 headless**：`java.awt.headless=true` 导致 `SystemTray.isSupported()` 返回 false，NotificationTool 初始化失败。在 `main()` 开头设 `false` 解决，不可放在 `application.yml` 中（该属性非 Spring 配置项）。
+3. **Spring AI 2.0 工具注册方式**：`.defaultTools(provider)` 是正确做法，框架自动将 `@Tool` 注解转为 Function Calling JSON Schema 发给模型。系统提示词中不需要手写工具列表。
+4. **Java Effectively Final**：lambda 中引用的局部变量需是 final 或 effectively final。`PathMatcher m = null; if(...) m = ...` 这种分段赋值会导致编译报错，改用三元表达式 `final PathMatcher m = (cond) ? value : null` 解决。
+5. **`Files.readAllLines` vs `Files.lines().toList()`**：后者在 Java 21 的 Stream 实现中存在兼容性问题，改用更安全的 `Files.readAllLines()`。
+
+---
+
+### 六、待完成
+
+- 换用支持 Function Calling 的模型（千问 qwen-plus / GPT-4o-mini）验证端到端工具调用链路
+- 确认 NotificationTool 在模型真正调用后能否正常弹窗（`TraySanityTest.main()` 已验证底层可用）
