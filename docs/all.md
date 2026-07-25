@@ -162,20 +162,7 @@ public ChatClient chatClient(ChatClient.Builder builder, ChatMemory chatMemory, 
 
 ---
 
-##  WebTool — HTTP 请求
 
-**依赖**：JDK `java.net.http.HttpClient`
-
-| 方法         | 参数                              | 说明        |
-| ------------ | --------------------------------- | ----------- |
-| `httpGet`    | `url, headers`                    | GET 请求    |
-| `httpPost`   | `url, body, contentType, headers` | POST 请求   |
-| `httpPut`    | `url, body, headers`              | PUT 请求    |
-| `httpDelete` | `url, headers`                    | DELETE 请求 |
-
-**headers 格式**：JSON 键值对，如 `{"Authorization":"Bearer xxx"}`，不需要时传空字符串。
-
----
 
 ##  NotificationTool — 系统通知
 
